@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event_loop::{ActiveEventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use crate::wgpu_state::WgpuState;
@@ -54,7 +54,7 @@ impl ApplicationHandler for App<'_> {
                     
                     self.wgpu_state.as_mut().unwrap().update();
                     if let Some(wgpu_state) = self.wgpu_state.as_mut() {
-                        wgpu_state.render();
+                        wgpu_state.render().expect("TODO: panic message");
                     }
                 }
                 _ => {}
@@ -65,7 +65,6 @@ impl ApplicationHandler for App<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn it_works() {
