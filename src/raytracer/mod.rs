@@ -1,7 +1,8 @@
-use wgpu::{Device, Queue, RenderPipeline, Sampler, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView};
+use wgpu::{BindingType, Buffer, BufferUsages, Device, Queue, RenderPipeline, Sampler, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView};
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
-use crate::Scene;
+use crate::camera::SceneParameters;
+
 
 pub struct RayTracer {
     // scene_parameters: wgpu::Buffer,
@@ -13,17 +14,28 @@ pub struct RayTracer {
 
 impl RayTracer {
     pub fn new(device: &Device,
-               _queue: &Queue,
+               queue: &Queue,
                surface_config: &SurfaceConfiguration,
-               _scene: &Scene,
+               scene_parameters: SceneParameters,
                size: &PhysicalSize<u32>) -> Option<Self> {
 
 
         let (color_buffer_view, sampler) =
         create_color_buffer_assets(device, size);
 
+        let scene_param_desc = wgpu::BufferDescriptor {
+            label: Some("scene parameters uniform buffer"),
+            size: 64,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        };
+
+        let scene_param_buffer = device.create_buffer(&scene_param_desc);
+
+        queue.write_buffer(&scene_param_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
+
         let (ray_tracing_bind_group, ray_tracing_pipeline) =
-        create_ray_tracing_pipeline(device, &color_buffer_view);
+        create_ray_tracing_pipeline(device, &color_buffer_view, &scene_param_buffer);
 
         let (render_pipeline_bind_group, render_pipeline) =
             create_render_pipeline(device, surface_config.format, &color_buffer_view, &sampler);
@@ -43,7 +55,6 @@ impl RayTracer {
                   surface: &mut Surface,
                   surface_config: &mut SurfaceConfiguration,
                   new_size: (u32, u32)) {
-
         let (width, height) = new_size;
         surface_config.width = width;
         surface_config.height = height;
@@ -74,7 +85,6 @@ impl RayTracer {
                   surface: &mut Surface,
                   device: & Device,
                   queue: & Queue, size: &PhysicalSize<u32>) -> Result<(), wgpu::SurfaceError> {
-
         let output = surface.get_current_texture()?;
         let view = output.texture.create_view(
             &wgpu::TextureViewDescriptor::default());
@@ -274,7 +284,8 @@ fn create_render_pipeline(
 
 fn create_ray_tracing_pipeline(
     device: &wgpu::Device,
-    color_buffer_view: &TextureView)
+    color_buffer_view: &TextureView,
+    scene_param_buffer: &Buffer)
     -> (wgpu::BindGroup, wgpu::ComputePipeline) {
     let ray_tracing_bind_group_layout = device.create_bind_group_layout(
         &wgpu::BindGroupLayoutDescriptor {
@@ -289,10 +300,21 @@ fn create_ray_tracing_pipeline(
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 }
             ],
         }
     );
+
     let ray_tracing_bind_group = device.create_bind_group(
         &wgpu::BindGroupDescriptor {
             label: Some("ray tracing bind group"),
@@ -301,6 +323,10 @@ fn create_ray_tracing_pipeline(
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(color_buffer_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: scene_param_buffer.as_entire_binding(),
                 }
             ],
         }

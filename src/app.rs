@@ -4,7 +4,7 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
-use crate::RayTracer;
+use crate::{Camera, RayTracer};
 use crate::scene::Scene;
 
 
@@ -13,11 +13,12 @@ pub struct App<'a> {
     wgpu_state: Option<WgpuState<'a>>,
     renderer: Option<RayTracer>,
     scene: Scene,
+    camera: Camera,
 }
 
 impl App<'_> {
-    pub fn new(scene: Scene) -> Self {
-        Self { window: None, wgpu_state: None, renderer: None, scene }
+    pub fn new(scene: Scene, camera: Camera) -> Self {
+        Self { window: None, wgpu_state: None, renderer: None, scene, camera }
     }
 }
 
@@ -38,7 +39,7 @@ impl ApplicationHandler for App<'_> {
                     &state.device,
                     &state.queue,
                     &state.surface_config,
-                    &self.scene,
+                    self.camera.get_scene_parameters(),
                     &state.size
                 );
             }

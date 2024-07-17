@@ -1,4 +1,17 @@
-use glam::Vec3;
+use glam::{Vec3, Vec4};
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct SceneParameters {
+    camera_position: Vec4,
+    camera_forwards: Vec4,
+    camera_right: Vec4,
+    camera_up: Vec3,
+    sphere_count: f32,
+}
+
+unsafe impl bytemuck::Pod for SceneParameters {}
+unsafe impl bytemuck::Zeroable for SceneParameters {}
 
 pub struct Camera {
     position: Vec3,
@@ -29,5 +42,15 @@ impl Camera {
         );
         self.right = self.forwards.cross(Vec3::new(0.0, 0.0, 1.0));
         self.up = self.right.cross(self.forwards);
+    }
+
+    pub fn get_scene_parameters(&self) -> SceneParameters {
+        SceneParameters {
+            camera_position: self.position.extend(0.0),
+            camera_forwards: self.forwards.extend(0.0),
+            camera_right: self.right.extend(0.0),
+            camera_up: self.up,
+            sphere_count: 32.0,
+        }
     }
 }

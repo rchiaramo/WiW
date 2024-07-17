@@ -1,10 +1,10 @@
 use glam::Vec3;
-use crate::{Camera, Sphere};
+use crate::{Sphere};
 use crate::util_funcs::random_f32;
+
 
 pub struct Scene {
     spheres: Vec<Sphere>,
-    camera: Camera,
 }
 
 impl Scene {
@@ -22,9 +22,7 @@ impl Scene {
                 0.3 + 0.7 * random_f32());
             spheres.push(Sphere::new(center, radius, albedo))
         }
-        // let camera = Camera::new(Vec3::new(-20.0, 0.0, 0.0));
-        let camera = Camera::new(Vec3::new(0.75, 1.0, 0.25));
 
-        Self { spheres, camera }
+        Self { spheres }
     }
 }
