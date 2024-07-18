@@ -13,12 +13,15 @@ pub struct App<'a> {
     wgpu_state: Option<WgpuState<'a>>,
     renderer: Option<RayTracer>,
     scene: Scene,
-    camera: Camera,
+    render_parameters: RenderParameters,
 }
 
-impl App<'_> {
-    pub fn new(scene: Scene, camera: Camera) -> Self {
-        Self { window: None, wgpu_state: None, renderer: None, scene, camera }
+impl Default for App<'_> {
+    fn default() -> Self {
+        let scene = Scene::new();
+        let camera = Camera::default();
+        let render_parameters = RenderParameters { camera, viewport:(0, 0) };
+        Self {window: None, wgpu_state: None, renderer: None, scene, render_parameters }
     }
 }
 
@@ -26,22 +29,41 @@ impl ApplicationHandler for App<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
             let win_attr = Window::default_attributes()
+                .with_inner_size(winit::dpi::PhysicalSize::new(1600, 900))
                 .with_title("WiW app");
             let window = Arc::new(
                 event_loop.create_window(win_attr).unwrap());
             self.window = Some(window.clone());
 
-            let state = WgpuState::new(window.clone());
-            self.wgpu_state = Some(state);
+            self.wgpu_state = WgpuState::new(window.clone());
+
+            let mut size = {
+                let viewport = window.inner_size();
+                (viewport.width, viewport.height)
+            };
+            self.render_parameters.viewport = size;
+
+            // This code properly gets the resolution of the largest window, but when passed to
+            // the renderer to use as the biggest array value, clips the image for some reason
+
+            // let _max_viewport_resolution = window
+            //     .available_monitors()
+            //     .map(|monitor| -> u32 {
+            //         let viewport = monitor.size();
+            //         size = (viewport.width, viewport.height);
+            //         size.0 * size.1
+            //     })
+            //     .max()
+            //     .expect("must have at least one monitor");
 
             if let Some(state) = &self.wgpu_state {
                 self.renderer = RayTracer::new(
                     &state.device,
                     &state.queue,
                     &state.surface_config,
-                    self.camera.get_scene_parameters(),
+                    &self.render_parameters,
                     &self.scene,
-                    &state.size
+                    self.render_parameters.viewport
                 );
             }
         }
@@ -65,11 +87,12 @@ impl ApplicationHandler for App<'_> {
                 WindowEvent::Resized(new_size) => {
                     if let (Some(renderer), Some(state)) =
                         (self.renderer.as_mut(), self.wgpu_state.as_mut()) {
-
+                        self.render_parameters.viewport = (new_size.width, new_size.height);
                         renderer.resize(&state.device,
+                                        &state.queue,
                                         &mut state.surface,
                                         &mut state.surface_config,
-                                        (new_size.width, new_size.height));
+                                        &self.render_parameters);
                         self.window.as_ref().unwrap().request_redraw();
                     }
                 },
@@ -83,7 +106,7 @@ impl ApplicationHandler for App<'_> {
                                 &mut state.surface,
                                 &state.device,
                                 &state.queue,
-                                &state.size
+                                self.render_parameters.viewport
                             ).expect("TODO: panic message");
                     }
                 }
@@ -98,16 +121,18 @@ pub struct WgpuState<'a> {
     surface_config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    size: winit::dpi::PhysicalSize<u32>,
 }
 
 impl<'a> WgpuState<'a> {
-    pub fn new(window: Arc<Window>) -> WgpuState<'a> {
+    pub fn new(window: Arc<Window>) -> Option<WgpuState<'a>> {
         pollster::block_on(WgpuState::new_async(window))
     }
 
-    async fn new_async(window: Arc<Window>) -> WgpuState<'a> {
-        let size = window.inner_size();
+    async fn new_async(window: Arc<Window>) -> Option<WgpuState<'a>> {
+        let size = {
+            let viewport = window.inner_size();
+            (viewport.width, viewport.height)
+        };
 
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor {
@@ -138,28 +163,34 @@ impl<'a> WgpuState<'a> {
 
         let surface_capabilities = surface.get_capabilities(&adapter);
 
-        let surface_format = surface_capabilities.formats.iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_capabilities.formats[0]);
+        // I need to figure out why Bgra8Unorm looks best
+
+        // let surface_format = surface_capabilities.formats.iter()
+        //     .find(|f| f.is_srgb())
+        //     .copied()
+        //     .unwrap_or(surface_capabilities.formats[0]);
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
+            format: wgpu::TextureFormat::Bgra8Unorm, // surface_format,
+            width: size.0,
+            height: size.1,
             present_mode: surface_capabilities.present_modes[0],
             alpha_mode: surface_capabilities.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
-        Self {
+        Some(Self {
             surface,
             surface_config,
             device,
             queue,
-            size,
-        }
+        })
     }
+}
+
+pub struct RenderParameters {
+    pub camera: Camera,
+    pub viewport: (u32, u32)
 }

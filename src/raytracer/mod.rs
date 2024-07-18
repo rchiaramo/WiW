@@ -1,12 +1,12 @@
+use glam::{Vec4};
 use wgpu::{BindingType, Buffer, BufferUsages, Device, Queue, RenderPipeline, Sampler, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
-use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
-use crate::camera::SceneParameters;
+use crate::app::RenderParameters;
 use crate::Scene;
 
 pub struct RayTracer {
-    // scene_parameters: wgpu::Buffer,
+    scene_parameter_buffer: wgpu::Buffer,
     ray_tracing_pipeline: wgpu::ComputePipeline,
     ray_tracing_bind_group: wgpu::BindGroup,
     render_pipeline: RenderPipeline,
@@ -17,13 +17,13 @@ impl RayTracer {
     pub fn new(device: &Device,
                queue: &Queue,
                surface_config: &SurfaceConfiguration,
-               scene_parameters: SceneParameters,
+               render_parameters: &RenderParameters,
                scene: &Scene,
-               size: &PhysicalSize<u32>) -> Option<Self> {
+               max_image_size: (u32, u32)) -> Option<Self> {
 
 
         let (color_buffer_view, sampler) =
-        create_color_buffer_assets(device, size);
+        create_color_buffer_assets(device, max_image_size);
 
         let scene_param_desc = wgpu::BufferDescriptor {
             label: Some("scene parameters uniform buffer"),
@@ -32,9 +32,11 @@ impl RayTracer {
             mapped_at_creation: false,
         };
 
-        let scene_param_buffer = device.create_buffer(&scene_param_desc);
+        let scene_parameters = get_scene_parameters(render_parameters);
 
-        queue.write_buffer(&scene_param_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
+        let scene_parameter_buffer = device.create_buffer(&scene_param_desc);
+
+        queue.write_buffer(&scene_parameter_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
         
         let spheres = &scene.spheres;
         let sphere_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -44,13 +46,13 @@ impl RayTracer {
         });
 
         let (ray_tracing_bind_group, ray_tracing_pipeline) =
-        create_ray_tracing_pipeline(device, &color_buffer_view, &scene_param_buffer, &sphere_buffer);
+        create_ray_tracing_pipeline(device, &color_buffer_view, &scene_parameter_buffer, &sphere_buffer);
 
         let (render_pipeline_bind_group, render_pipeline) =
             create_render_pipeline(device, surface_config.format, &color_buffer_view, &sampler);
 
         Some(Self {
-            // scene_parameters: wgpu::Buffer,
+            scene_parameter_buffer,
             ray_tracing_pipeline,
             ray_tracing_bind_group,
             render_pipeline,
@@ -61,13 +63,17 @@ impl RayTracer {
 
     pub fn resize(&mut self,
                   device: &Device,
+                  queue: &Queue,
                   surface: &mut Surface,
                   surface_config: &mut SurfaceConfiguration,
-                  new_size: (u32, u32)) {
-        let (width, height) = new_size;
+                  render_parameters: &RenderParameters) {
+        let (width, height) = render_parameters.viewport;
         surface_config.width = width;
         surface_config.height = height;
         surface.configure(device, surface_config);
+
+        let scene_parameters = get_scene_parameters(render_parameters);
+        queue.write_buffer(&self.scene_parameter_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
     }
 
     pub fn input(&mut self, _event: &WindowEvent) -> bool {
@@ -93,7 +99,9 @@ impl RayTracer {
     pub fn render(&mut self,
                   surface: &mut Surface,
                   device: & Device,
-                  queue: & Queue, size: &PhysicalSize<u32>) -> Result<(), wgpu::SurfaceError> {
+                  queue: & Queue,
+                  size: (u32, u32)) -> Result<(), wgpu::SurfaceError> {
+
         let output = surface.get_current_texture()?;
         let view = output.texture.create_view(
             &wgpu::TextureViewDescriptor::default());
@@ -112,7 +120,7 @@ impl RayTracer {
             );
             ray_tracing_pass.set_pipeline(&self.ray_tracing_pipeline);
             ray_tracing_pass.set_bind_group(0, &self.ray_tracing_bind_group, &[]);
-            ray_tracing_pass.dispatch_workgroups(size.width, size.height, 1);
+            ray_tracing_pass.dispatch_workgroups(size.0, size.1, 1);
         }
 
         {
@@ -141,11 +149,11 @@ impl RayTracer {
     }
 }
 
-fn create_color_buffer_assets(device: &Device, size: &PhysicalSize<u32>)
-                              -> (wgpu::TextureView, wgpu::Sampler) {
+fn create_color_buffer_assets(device: &Device, max_image_size: (u32, u32))
+                              -> (TextureView, Sampler) {
     let texture_size = wgpu::Extent3d {
-        width: size.width,
-        height: size.height,
+        width: max_image_size.0,
+        height: max_image_size.1,
         depth_or_array_layers: 1,
     };
 
@@ -381,4 +389,24 @@ fn create_ray_tracing_pipeline(
     );
 
     (ray_tracing_bind_group, ray_tracing_pipeline)
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+struct SceneParameters {
+    camera_position: Vec4,
+    camera_forwards: Vec4,
+    camera_right: Vec4,
+    camera_up: Vec4,
+}
+unsafe impl bytemuck::Pod for SceneParameters {}
+unsafe impl bytemuck::Zeroable for SceneParameters {}
+
+fn get_scene_parameters(render_parameters: &RenderParameters) -> SceneParameters {
+    SceneParameters {
+        camera_position: render_parameters.camera.position.extend(0.0),
+        camera_forwards: render_parameters.camera.forwards.extend(0.0),
+        camera_right: render_parameters.camera.right.extend(0.0),
+        camera_up: render_parameters.camera.up.extend(0.0),
+    }
 }

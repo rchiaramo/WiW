@@ -1,6 +1,5 @@
 use glam::Vec3;
-use crate::{Sphere, SPHERE_COUNT};
-use crate::util_funcs::random_f32;
+use crate::Sphere;
 
 
 pub struct Scene {
@@ -9,19 +8,15 @@ pub struct Scene {
 
 impl Scene {
     pub fn new() -> Self {
-        let mut spheres = Vec::<Sphere>::with_capacity(SPHERE_COUNT);
-        for _i in 0..SPHERE_COUNT {
-            let center = Vec3::new(
-                3.0 + 7.0 * random_f32(),
-                -5.0 + 10.0 * random_f32(),
-                -5.0 + 10.0 * random_f32());
-            let radius = 0.1 + 1.9 * random_f32();
-            let albedo = Vec3::new(
-                0.3 + 0.7 * random_f32(),
-                0.3 + 0.7 * random_f32(),
-                0.3 + 0.7 * random_f32());
-            spheres.push(Sphere::new(center, radius, albedo))
-        }
+        let sphere1 = Sphere::new(
+            Vec3::new(0.0, 0.0, -1.0),
+            0.5,
+            Vec3::new(1.0, 0.0, 0.0));
+        let sphere2 = Sphere::new(
+            Vec3::new(0.0, -100.5, -1.0),
+            100.0,
+            Vec3::new(1.0, 0.0, 0.0));
+        let mut spheres = vec![sphere1, sphere2];
 
         Self { spheres }
     }
