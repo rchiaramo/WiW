@@ -1,8 +1,9 @@
 use wgpu::{BindingType, Buffer, BufferUsages, Device, Queue, RenderPipeline, Sampler, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView};
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use crate::camera::SceneParameters;
-
+use crate::Scene;
 
 pub struct RayTracer {
     // scene_parameters: wgpu::Buffer,
@@ -17,6 +18,7 @@ impl RayTracer {
                queue: &Queue,
                surface_config: &SurfaceConfiguration,
                scene_parameters: SceneParameters,
+               scene: &Scene,
                size: &PhysicalSize<u32>) -> Option<Self> {
 
 
@@ -33,9 +35,16 @@ impl RayTracer {
         let scene_param_buffer = device.create_buffer(&scene_param_desc);
 
         queue.write_buffer(&scene_param_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
+        
+        let spheres = &scene.spheres;
+        let sphere_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Sphere storage buffer"),
+            contents: bytemuck::cast_slice(spheres.as_slice()),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        });
 
         let (ray_tracing_bind_group, ray_tracing_pipeline) =
-        create_ray_tracing_pipeline(device, &color_buffer_view, &scene_param_buffer);
+        create_ray_tracing_pipeline(device, &color_buffer_view, &scene_param_buffer, &sphere_buffer);
 
         let (render_pipeline_bind_group, render_pipeline) =
             create_render_pipeline(device, surface_config.format, &color_buffer_view, &sampler);
@@ -285,7 +294,8 @@ fn create_render_pipeline(
 fn create_ray_tracing_pipeline(
     device: &wgpu::Device,
     color_buffer_view: &TextureView,
-    scene_param_buffer: &Buffer)
+    scene_param_buffer: &Buffer,
+    sphere_buffer: &Buffer)
     -> (wgpu::BindGroup, wgpu::ComputePipeline) {
     let ray_tracing_bind_group_layout = device.create_bind_group_layout(
         &wgpu::BindGroupLayoutDescriptor {
@@ -294,7 +304,7 @@ fn create_ray_tracing_pipeline(
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
+                    ty: BindingType::StorageTexture {
                         access: StorageTextureAccess::WriteOnly,
                         format: TextureFormat::Rgba8Unorm,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -310,7 +320,19 @@ fn create_ray_tracing_pipeline(
                         min_binding_size: None,
                     },
                     count: None,
-                }
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: true,
+                        },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         }
     );
@@ -327,6 +349,10 @@ fn create_ray_tracing_pipeline(
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: scene_param_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: sphere_buffer.as_entire_binding(),
                 }
             ],
         }

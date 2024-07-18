@@ -1,4 +1,5 @@
 use glam::{Vec3, Vec4};
+use crate::SPHERE_COUNT;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -50,7 +51,7 @@ impl Camera {
             camera_forwards: self.forwards.extend(0.0),
             camera_right: self.right.extend(0.0),
             camera_up: self.up,
-            sphere_count: 32.0,
+            sphere_count: SPHERE_COUNT as f32,
         }
     }
 }

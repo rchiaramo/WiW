@@ -40,6 +40,7 @@ impl ApplicationHandler for App<'_> {
                     &state.queue,
                     &state.surface_config,
                     self.camera.get_scene_parameters(),
+                    &self.scene,
                     &state.size
                 );
             }
