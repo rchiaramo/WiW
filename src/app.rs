@@ -20,7 +20,11 @@ impl Default for App<'_> {
     fn default() -> Self {
         let scene = Scene::new();
         let camera = Camera::default();
-        let render_parameters = RenderParameters { camera, viewport:(0, 0) };
+        let render_parameters = RenderParameters {
+            camera,
+            sampling_parameters: SamplingParameters::default(),
+            viewport:(0, 0)
+        };
         Self {window: None, wgpu_state: None, renderer: None, scene, render_parameters }
     }
 }
@@ -155,8 +159,12 @@ impl<'a> WgpuState<'a> {
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: wgpu::Limits {
+                    max_storage_buffer_binding_size: 512_u32 << 20,
+                    ..Default::default()
+                },
                 label: None,
+                memory_hints: Default::default(),
             },
             None,
         ).await.unwrap();
@@ -190,7 +198,19 @@ impl<'a> WgpuState<'a> {
     }
 }
 
+pub struct SamplingParameters {
+    pub samples_per_pixel: u32,
+    pub num_bounces: u32,
+}
+
+impl Default for SamplingParameters {
+    fn default() -> Self {
+        Self { samples_per_pixel: 5_u32, num_bounces: 1_u32 }
+    }
+}
+
 pub struct RenderParameters {
     pub camera: Camera,
+    pub sampling_parameters: SamplingParameters,
     pub viewport: (u32, u32)
 }

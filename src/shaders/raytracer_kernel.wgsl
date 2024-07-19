@@ -1,3 +1,9 @@
+const EPSILON = 0.001f;
+
+const PI = 3.1415927f;
+const FRAC_1_PI = 0.31830987f;
+const FRAC_PI_2 = 1.5707964f;
+
 struct Sphere {
     center: vec3<f32>,
     albedo: vec3<f32>,
@@ -17,16 +23,22 @@ struct HitPayload {
     hit: bool,
 }
 
-struct SceneData {
-    cameraPos: vec3<f32>,
-    cameraForwards: vec3<f32>,
-    cameraRight: vec3<f32>,
-    cameraUp: vec3<f32>,
+struct CameraData {
+    pos: vec3f,
+    forwards: vec3f,
+    right: vec3f,
+    up: vec3f,
+}
+
+struct SamplingParameters {
+    samples_per_pixel: u32,
+    num_bounces: u32
 }
 
 @group(0) @binding(0) var color_buffer: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(1) var<uniform> scene: SceneData;
-@group(0) @binding(2) var<storage, read> spheres: array<Sphere>;
+@group(0) @binding(1) var<uniform> camera: CameraData;
+@group(0) @binding(2) var<uniform> sampling_parameters: SamplingParameters;
+@group(0) @binding(3) var<storage, read> spheres: array<Sphere>;
 @compute @workgroup_size(1,1,1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
 
@@ -35,24 +47,25 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
     let viewport_height: f32 = 2.0;
     let viewport_width: f32 = viewport_height * (f32(image_size.x) / f32(image_size.y));
+    // need to change this when the camera starts moving...
     let viewport_u: vec3f = vec3f(viewport_width, 0.0, 0.0);
     let viewport_v: vec3f = vec3f(0.0, -viewport_height, 0.0);
+
     let du: vec3f = vec3f(viewport_width / f32(image_size.x), 0.0, 0.0);
     let dv: vec3f = vec3f(0.0, -viewport_height / f32(image_size.y), 0.0);
-    let upper_left: vec3f = scene.cameraPos - vec3f(0.0, 0.0, 1.0) - viewport_u / 2.0 - viewport_v / 2.0;
 
-    let horiz_dx: f32 = 2.0 * (f32(screen_pos.x) / f32(image_size.x)) - 1.0;
-    let vert_dy: f32 = 2.0 * (1.0 - f32(screen_pos.y) / f32(image_size.y)) - 1.0;
+    let upper_left: vec3f = camera.pos + camera.forwards - viewport_u / 2.0 - viewport_v / 2.0;
+    let pixel_00: vec3f = upper_left + du/2.0 + dv/2.0;
 
-    let forwards: vec3<f32> = scene.cameraForwards;
-    let right: vec3<f32> = scene.cameraRight;
-    let up: vec3<f32> = scene.cameraUp;
+    // start here with main loop; for this position, loop over samples_per_pixel
+    var pixel_color: vec3f = vec3f(0.0, 0.0, 0.0);
+    var rng_state:u32 = initRng(screen_pos, image_size, 1u);
+    for (var i: u32 = 0; i < sampling_parameters.samples_per_pixel; i++) {
+        var ray: Ray = getRay(pixel_00, id.x, id.y, du, dv, &rng_state);
+        pixel_color += rayColor(ray);
+    }
+    pixel_color = pixel_color / f32(sampling_parameters.samples_per_pixel);
 
-    var myRay: Ray;
-    myRay.origin = scene.cameraPos;
-    myRay.direction = normalize(upper_left + f32(id.x) * du + f32(id.y) * dv - scene.cameraPos);
-
-    let pixel_color: vec3<f32> = rayColor(myRay);
 //    let pixel_color: vec3<f32> = vec3<f32>(f32(screen_pos.x) / f32(screen_size.x), f32(screen_pos.y) / f32(screen_size.y), 0.0);
 
     textureStore(color_buffer, screen_pos, vec4<f32>(pixel_color, 1.0));
@@ -77,6 +90,9 @@ fn rayColor(ray: Ray) -> vec3<f32> {
 
     if (hit_something) {
         pixel_color = renderState.color;
+    } else {
+        let a: f32 = 0.5 * (ray.direction.y + 1.0);
+        pixel_color = (1.0 - a) * vec3f(1.0, 1.0, 1.0) + a * vec3f(0.5, 0.7, 1.0);
     }
     return pixel_color;
 }
@@ -104,4 +120,89 @@ fn hit(ray: Ray, sphere: Sphere, t_min: f32, t_nearest: f32, oldRenderState: Hit
     }
     renderState.hit = false;
     return renderState;
+}
+
+fn getRay(pixel_00: vec3f, x: u32, y: u32, du: vec3f, dv: vec3f, state: ptr<function, u32>) -> Ray {
+    let offset: vec3f = rngNextVec3InUnitDisk(state);
+
+    var ray: Ray;
+    ray.origin = camera.pos + offset.x * du + offset.y * dv;
+    ray.direction = normalize(pixel_00 + f32(x) * du + f32(y) * dv - camera.pos);
+    return ray;
+}
+
+//fn rngNextInUnitHemisphere(state: ptr<function, u32>) -> vec3<f32> {
+//    let r1 = rngNextFloat(state);
+//    let r2 = rngNextFloat(state);
+//
+//    let phi = 2f * PI * r1;
+//    let sinTheta = sqrt(1f - r2 * r2);
+//
+//    let x = cos(phi) * sinTheta;
+//    let y = sin(phi) * sinTheta;
+//    let z = r2;
+//
+//    return vec3(x, y, z);
+//}
+//
+fn rngNextVec3InUnitDisk(state: ptr<function, u32>) -> vec3<f32> {
+    // Generate numbers uniformly in a disk:
+    // https://stats.stackexchange.com/a/481559
+
+    // r^2 is distributed as U(0, 1).
+    let r = sqrt(rngNextFloat(state));
+    let alpha = 2.0 * PI * rngNextFloat(state);
+
+    let x = r * cos(alpha);
+    let y = r * sin(alpha);
+
+    return vec3(x, y, 0.0);
+}
+
+fn rngNextVec3InUnitSphere(state: ptr<function, u32>) -> vec3<f32> {
+    // probability density is uniformly distributed over r^3
+    let r = pow(rngNextFloat(state), 0.33333f);
+    let theta = PI * rngNextFloat(state);
+    let phi = 2.0 * PI * rngNextFloat(state);
+
+    let x = r * sin(theta) * cos(phi);
+    let y = r * sin(theta) * sin(phi);
+    let z = r * cos(theta);
+
+    return vec3(x, y, z);
+}
+
+fn rngNextUintInRange(state: ptr<function, u32>, min: u32, max: u32) -> u32 {
+    rngNextInt(state);
+    return min + (*state) % (max - min);
+}
+
+fn rngNextFloat(state: ptr<function, u32>) -> f32 {
+    rngNextInt(state);
+    return f32(*state) / f32(0xffffffffu);
+}
+
+fn initRng(pixel: vec2<u32>, resolution: vec2<u32>, frame: u32) -> u32 {
+    // Adapted from https://github.com/boksajak/referencePT
+    let seed = dot(pixel, vec2<u32>(1u, resolution.x)) ^ jenkinsHash(frame);
+    return jenkinsHash(seed);
+}
+
+fn rngNextInt(state: ptr<function, u32>) {
+    // PCG random number generator
+    // Based on https://www.shadertoy.com/view/XlGcRh
+
+    let oldState = *state + 747796405u + 2891336453u;
+    let word = ((oldState >> ((oldState >> 28u) + 4u)) ^ oldState) * 277803737u;
+    *state = (word >> 22u) ^ word;
+}
+
+fn jenkinsHash(input: u32) -> u32 {
+    var x = input;
+    x += x << 10u;
+    x ^= x >> 6u;
+    x += x << 3u;
+    x ^= x >> 11u;
+    x += x << 15u;
+    return x;
 }

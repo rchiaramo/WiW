@@ -2,11 +2,12 @@ use glam::{Vec4};
 use wgpu::{BindingType, Buffer, BufferUsages, Device, Queue, RenderPipeline, Sampler, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::WindowEvent;
-use crate::app::RenderParameters;
-use crate::Scene;
+use crate::app::{RenderParameters, SamplingParameters};
+use crate::{Camera, Scene};
 
 pub struct RayTracer {
-    scene_parameter_buffer: wgpu::Buffer,
+    camera_buffer: Buffer,
+    sampling_parameters_buffer: Buffer,
     ray_tracing_pipeline: wgpu::ComputePipeline,
     ray_tracing_bind_group: wgpu::BindGroup,
     render_pipeline: RenderPipeline,
@@ -21,22 +22,31 @@ impl RayTracer {
                scene: &Scene,
                max_image_size: (u32, u32)) -> Option<Self> {
 
-
+        // create the color_buffer that the compute shader will use to store image
         let (color_buffer_view, sampler) =
         create_color_buffer_assets(device, max_image_size);
 
-        let scene_param_desc = wgpu::BufferDescriptor {
-            label: Some("scene parameters uniform buffer"),
+        // initialize the camera buffer
+        let camera_desc = wgpu::BufferDescriptor {
+            label: Some("camera uniform buffer"),
             size: 64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         };
+        let camera = get_gpu_camera(&render_parameters.camera);
+        let camera_buffer = device.create_buffer(&camera_desc);
+        queue.write_buffer(&camera_buffer, 0, bytemuck::cast_slice(&[camera]));
 
-        let scene_parameters = get_scene_parameters(render_parameters);
-
-        let scene_parameter_buffer = device.create_buffer(&scene_param_desc);
-
-        queue.write_buffer(&scene_parameter_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
+        // initialize the sampling_parameters buffer
+        let sampling_param_desc = wgpu::BufferDescriptor {
+            label: Some("sampling parameters uniform buffer"),
+            size: 8,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        };
+        let sampling_parameters = get_gpu_sampling_params(&render_parameters.sampling_parameters);
+        let sampling_parameters_buffer = device.create_buffer(&sampling_param_desc);
+        queue.write_buffer(&sampling_parameters_buffer, 0, bytemuck::cast_slice(&[sampling_parameters]));
         
         let spheres = &scene.spheres;
         let sphere_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -46,13 +56,18 @@ impl RayTracer {
         });
 
         let (ray_tracing_bind_group, ray_tracing_pipeline) =
-        create_ray_tracing_pipeline(device, &color_buffer_view, &scene_parameter_buffer, &sphere_buffer);
+        create_ray_tracing_pipeline(device,
+                                    &color_buffer_view,
+                                    &camera_buffer,
+                                    &sampling_parameters_buffer,
+                                    &sphere_buffer);
 
         let (render_pipeline_bind_group, render_pipeline) =
             create_render_pipeline(device, surface_config.format, &color_buffer_view, &sampler);
 
         Some(Self {
-            scene_parameter_buffer,
+            camera_buffer,
+            sampling_parameters_buffer,
             ray_tracing_pipeline,
             ray_tracing_bind_group,
             render_pipeline,
@@ -72,8 +87,8 @@ impl RayTracer {
         surface_config.height = height;
         surface.configure(device, surface_config);
 
-        let scene_parameters = get_scene_parameters(render_parameters);
-        queue.write_buffer(&self.scene_parameter_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
+        let scene_parameters = get_gpu_camera(&render_parameters.camera);
+        queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
     }
 
     pub fn input(&mut self, _event: &WindowEvent) -> bool {
@@ -294,20 +309,22 @@ fn create_render_pipeline(
             alpha_to_coverage_enabled: false,
         },
         multiview: None,
+        cache: None,
     });
 
     (render_bind_group, rp)
 }
 
 fn create_ray_tracing_pipeline(
-    device: &wgpu::Device,
+    device: &Device,
     color_buffer_view: &TextureView,
-    scene_param_buffer: &Buffer,
+    camera_buffer: &Buffer,
+    sampling_parameters_buffer: &Buffer,
     sphere_buffer: &Buffer)
     -> (wgpu::BindGroup, wgpu::ComputePipeline) {
     let ray_tracing_bind_group_layout = device.create_bind_group_layout(
         &wgpu::BindGroupLayoutDescriptor {
-            label: Some("ray tracing bind group layout"),
+            label: Some("compute shader bind group layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -333,6 +350,16 @@ fn create_ray_tracing_pipeline(
                     binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage {
                             read_only: true,
                         },
@@ -356,10 +383,14 @@ fn create_ray_tracing_pipeline(
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: scene_param_buffer.as_entire_binding(),
+                    resource: camera_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
+                    resource: sampling_parameters_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
                     resource: sphere_buffer.as_entire_binding(),
                 }
             ],
@@ -385,6 +416,7 @@ fn create_ray_tracing_pipeline(
             module: &shader,
             entry_point: "main",
             compilation_options: Default::default(),
+            cache: None,
         }
     );
 
@@ -393,20 +425,38 @@ fn create_ray_tracing_pipeline(
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-struct SceneParameters {
+struct GPUCamera {
     camera_position: Vec4,
     camera_forwards: Vec4,
     camera_right: Vec4,
     camera_up: Vec4,
 }
-unsafe impl bytemuck::Pod for SceneParameters {}
-unsafe impl bytemuck::Zeroable for SceneParameters {}
+unsafe impl bytemuck::Pod for GPUCamera {}
+unsafe impl bytemuck::Zeroable for GPUCamera {}
 
-fn get_scene_parameters(render_parameters: &RenderParameters) -> SceneParameters {
-    SceneParameters {
-        camera_position: render_parameters.camera.position.extend(0.0),
-        camera_forwards: render_parameters.camera.forwards.extend(0.0),
-        camera_right: render_parameters.camera.right.extend(0.0),
-        camera_up: render_parameters.camera.up.extend(0.0),
+fn get_gpu_camera(camera: &Camera) -> GPUCamera {
+    GPUCamera {
+        camera_position: camera.position.extend(0.0),
+        camera_forwards: camera.forwards.extend(0.0),
+        camera_right: camera.right.extend(0.0),
+        camera_up: camera.up.extend(0.0),
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct GPUSamplingParameters {
+    samples_per_pixel: u32,
+    num_bounces: u32,
+}
+
+// right now this is silly, but later when we add fields to this struct,
+// we may have to do some padding for GPU
+fn get_gpu_sampling_params(sampling_parameters: &SamplingParameters)
+    -> GPUSamplingParameters
+{
+    GPUSamplingParameters {
+        samples_per_pixel: sampling_parameters.samples_per_pixel,
+        num_bounces: sampling_parameters.num_bounces,
     }
 }
