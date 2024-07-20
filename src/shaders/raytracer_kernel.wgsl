@@ -19,7 +19,8 @@ struct HitPayload {
     t: f32,
     p: vec3f,
     n: vec3f,
-    color: vec3<f32>,
+    color: vec3f,
+    idx: u32,
     hit: bool,
 }
 
@@ -62,64 +63,98 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     var rng_state:u32 = initRng(screen_pos, image_size, 1u);
     for (var i: u32 = 0; i < sampling_parameters.samples_per_pixel; i++) {
         var ray: Ray = getRay(pixel_00, id.x, id.y, du, dv, &rng_state);
-        pixel_color += rayColor(ray);
+        pixel_color += rayColor(ray, &rng_state);
     }
     pixel_color = pixel_color / f32(sampling_parameters.samples_per_pixel);
-
+//    pixel_color = vec3f(0.0, 0.0, 1.0);
+//    pixel_color = vec3f(rngNextFloat(&rng_state), rngNextFloat(&rng_state), rngNextFloat(&rng_state));
 //    let pixel_color: vec3<f32> = vec3<f32>(f32(screen_pos.x) / f32(screen_size.x), f32(screen_pos.y) / f32(screen_size.y), 0.0);
 
     textureStore(color_buffer, screen_pos, vec4<f32>(pixel_color, 1.0));
 }
 
-fn rayColor(ray: Ray) -> vec3<f32> {
-    var pixel_color: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
-    var nearest_hit: f32 = 99999;
-    var hit_something: bool = false;
+fn rayColor(primaryRay: Ray, state: ptr<function, u32>) -> vec3<f32> {
+    // for every ray, we want to trace the ray through num_bounces
+    // rayColor calls traceRay to get a hit, then calls it again
+    // with new bounce ray
+    var nextRay = primaryRay;
+    var multiplier: vec3f = vec3f(1.0);
+    var pixel_color: vec3f = vec3f(0.0);
+    for (var i: u32 = 0; i < sampling_parameters.num_bounces; i++) {
+        var currentPayload = HitPayload();
 
-    var renderState: HitPayload;
-    let sphere_count = arrayLength(&spheres);
-    for (var i: u32 = 0; i < sphere_count; i++) {
-        var newHitPayload: HitPayload = hit(ray, spheres[i], 0.001, nearest_hit, renderState);
-
-        if (newHitPayload.hit) {
-            nearest_hit = newHitPayload.t;
-            renderState = newHitPayload;
-            hit_something = true;
+        if TraceRay(nextRay, &currentPayload) {
+            multiplier *= 0.5;
+            var randomBounce: vec3f = normalize(rngNextVec3InUnitSphere(state));
+            nextRay.origin = currentPayload.p + 0.0001 * currentPayload.n;
+            if dot(randomBounce, currentPayload.n) < 0.0 {
+                randomBounce *= -1.0;
+            }
+            nextRay.direction =  randomBounce;
+        } else {
+            let a: f32 = 0.5 * (primaryRay.direction.y + 1.0);
+            pixel_color = multiplier * ((1.0 - a) * vec3f(1.0, 1.0, 1.0) + a * vec3f(0.5, 0.7, 1.0));
+            break;
         }
     }
 
-    if (hit_something) {
-        pixel_color = renderState.color;
-    } else {
-        let a: f32 = 0.5 * (ray.direction.y + 1.0);
-        pixel_color = (1.0 - a) * vec3f(1.0, 1.0, 1.0) + a * vec3f(0.5, 0.7, 1.0);
-    }
     return pixel_color;
 }
 
-fn hit(ray: Ray, sphere: Sphere, t_min: f32, t_nearest: f32, oldRenderState: HitPayload) -> HitPayload {
+fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
+    var nearest_hit: f32 = 99999;
+    let sphere_count = arrayLength(&spheres);
+    var tempHitPayload = HitPayload();
+
+    for (var i: u32 = 0; i < sphere_count; i++) {
+        var newHitPayload = HitPayload();
+
+        if hit(ray, i, 0.001, nearest_hit, &newHitPayload) {
+            nearest_hit = newHitPayload.t;
+            tempHitPayload = newHitPayload;
+        }
+    }
+
+    if nearest_hit < 9999 {
+        *hit = tempHitPayload;
+        return true;
+    }
+
+    return false;
+}
+
+fn hit(ray: Ray, sphereIdx: u32, t_min: f32, t_nearest: f32, payload: ptr<function, HitPayload>) -> bool {
+    let sphere: Sphere = spheres[sphereIdx];
     let a: f32 = dot(ray.direction, ray.direction);
     let b: f32 = dot(ray.direction, ray.origin - sphere.center);
     let c: f32 = dot(ray.origin - sphere.center, ray.origin - sphere.center) -
         sphere.radius * sphere.radius;
     let discrim: f32 = b * b - a * c;
 
-    var renderState: HitPayload;
-    renderState.color = oldRenderState.color;
 
     if (discrim >= 0) {
-        let t: f32 = (-b - sqrt(discrim)) / a;
+        var t: f32 = (-b - sqrt(discrim)) / a;
         if (t > t_min && t < t_nearest) {
-            renderState.hit = true;
-            renderState.t = t;
-            let p: vec3<f32> = ray.origin + t * ray.direction;
-            let n: vec3<f32> = normalize(p - sphere.center);
-            renderState.color = 0.5 * (n + vec3<f32>(1.0, 1.0, 1.0));
-            return renderState;
+            *payload = hitSphere(t, ray, sphere, sphereIdx, true);
+            return true;
+        }
+
+        t = (-b + sqrt(discrim)) / a;
+        if (t > t_min && t < t_nearest) {
+            *payload = hitSphere(t, ray, sphere, sphereIdx, true);
+            return true;
         }
     }
-    renderState.hit = false;
-    return renderState;
+    return false;
+}
+
+fn hitSphere(t: f32, ray: Ray, sphere: Sphere, idx: u32, hit: bool) -> HitPayload {
+    // make the hitPayload struct
+    let p: vec3f = ray.origin + t * ray.direction;
+    let n: vec3f = normalize(p - sphere.center);
+    let color: vec3f = 0.5 * (n + vec3<f32>(1.0, 1.0, 1.0));
+
+    return HitPayload(t, p, n , color, idx, hit);
 }
 
 fn getRay(pixel_00: vec3f, x: u32, y: u32, du: vec3f, dv: vec3f, state: ptr<function, u32>) -> Ray {
@@ -131,20 +166,20 @@ fn getRay(pixel_00: vec3f, x: u32, y: u32, du: vec3f, dv: vec3f, state: ptr<func
     return ray;
 }
 
-//fn rngNextInUnitHemisphere(state: ptr<function, u32>) -> vec3<f32> {
-//    let r1 = rngNextFloat(state);
-//    let r2 = rngNextFloat(state);
-//
-//    let phi = 2f * PI * r1;
-//    let sinTheta = sqrt(1f - r2 * r2);
-//
-//    let x = cos(phi) * sinTheta;
-//    let y = sin(phi) * sinTheta;
-//    let z = r2;
-//
-//    return vec3(x, y, z);
-//}
-//
+fn rngNextInUnitHemisphere(state: ptr<function, u32>) -> vec3<f32> {
+    let r1 = rngNextFloat(state);
+    let r2 = rngNextFloat(state);
+
+    let phi = 2.0 * PI * r1;
+    let sinTheta = sqrt(1.0 - r2 * r2);
+
+    let x = cos(phi) * sinTheta;
+    let y = sin(phi) * sinTheta;
+    let z = r2;
+
+    return vec3(x, y, z);
+}
+
 fn rngNextVec3InUnitDisk(state: ptr<function, u32>) -> vec3<f32> {
     // Generate numbers uniformly in a disk:
     // https://stats.stackexchange.com/a/481559

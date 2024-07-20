@@ -1,4 +1,6 @@
 use std::sync::Arc;
+// use imgui::Context;
+// use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
@@ -40,6 +42,10 @@ impl ApplicationHandler for App<'_> {
             self.window = Some(window.clone());
 
             self.wgpu_state = WgpuState::new(window.clone());
+            // let win = event_loop.create_window(WindowAttributes::default()).expect("lol");
+            // let mut imgui = Context::create();
+            // let mut platform = WinitPlatform::init(& mut imgui);
+            // platform.attach_window(imgui.io_mut(), &win, HiDpiMode::Default);
 
             let mut size = {
                 let viewport = window.inner_size();
@@ -205,7 +211,7 @@ pub struct SamplingParameters {
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        Self { samples_per_pixel: 5_u32, num_bounces: 1_u32 }
+        Self { samples_per_pixel: 50_u32, num_bounces: 5_u32 }
     }
 }
 
