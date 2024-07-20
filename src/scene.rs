@@ -1,24 +1,42 @@
-use glam::Vec3;
+use glam::{Vec3};
+use crate::material::Material;
 use crate::Sphere;
 
 
 pub struct Scene {
     pub spheres: Vec<Sphere>,
+    pub materials: Vec<Material>,
 }
 
 impl Scene {
     pub fn new() -> Self {
-        let sphere1 = Sphere::new(
-            Vec3::new(0.0, 0.0, -1.0),
-            0.5,
-            Vec3::new(0.1, 0.2, 0.5));
-        let sphere2 = Sphere::new(
+        let mat_ground = Material::Lambertian(Vec3::new(0.8, 0.8, 0.0));
+        let mat_center = Material::Lambertian(Vec3::new(0.1, 0.2, 0.5));
+        let mat_left = Material::Metal(Vec3::new(0.8, 0.8, 0.8), 0.3);
+        let mat_right = Material::Metal(Vec3::new(0.8, 0.6, 0.2), 1.0);
+
+        let mut materials = vec![mat_ground, mat_center, mat_left, mat_right];
+
+        let ground = Sphere::new(
             Vec3::new(0.0, -100.5, -1.0),
             100.0,
-            Vec3::new(0.8, 0.8, 0.0));
-        let mut spheres = vec![sphere1, sphere2];
+            0);
+        let center = Sphere::new(
+            Vec3::new(0.0, 0.0, -1.2),
+            0.5,
+            1);
+        let left = Sphere::new(
+            Vec3::new(-1.0, 0.0, -1.0),
+            0.5,
+            2);
+        let right = Sphere::new(
+            Vec3::new(1.0, 0.0, -1.0),
+            0.5,
+            3);
 
-        Self { spheres }
+        let mut spheres = vec![ground, center, left, right];
+
+        Self { spheres, materials }
     }
 
 }

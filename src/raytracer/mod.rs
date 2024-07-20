@@ -55,12 +55,21 @@ impl RayTracer {
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         });
 
+        let materials = &scene.materials;
+        let materials_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Materials storage buffer"),
+            contents: bytemuck::cast_slice(materials.as_slice()),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        });
+
         let (ray_tracing_bind_group, ray_tracing_pipeline) =
         create_ray_tracing_pipeline(device,
                                     &color_buffer_view,
                                     &camera_buffer,
                                     &sampling_parameters_buffer,
-                                    &sphere_buffer);
+                                    &sphere_buffer,
+                                    &materials_buffer,
+        );
 
         let (render_pipeline_bind_group, render_pipeline) =
             create_render_pipeline(device, surface_config.format, &color_buffer_view, &sampler);
@@ -320,7 +329,8 @@ fn create_ray_tracing_pipeline(
     color_buffer_view: &TextureView,
     camera_buffer: &Buffer,
     sampling_parameters_buffer: &Buffer,
-    sphere_buffer: &Buffer)
+    sphere_buffer: &Buffer,
+    materials_buffer: &Buffer)
     -> (wgpu::BindGroup, wgpu::ComputePipeline) {
     let ray_tracing_bind_group_layout = device.create_bind_group_layout(
         &wgpu::BindGroupLayoutDescriptor {
@@ -368,6 +378,18 @@ fn create_ray_tracing_pipeline(
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: true,
+                        },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         }
     );
@@ -392,6 +414,10 @@ fn create_ray_tracing_pipeline(
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: sphere_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: materials_buffer.as_entire_binding(),
                 }
             ],
         }
