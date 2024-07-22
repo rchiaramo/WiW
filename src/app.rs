@@ -1,6 +1,4 @@
 use std::sync::Arc;
-// use imgui::Context;
-// use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop};
@@ -27,7 +25,12 @@ impl Default for App<'_> {
             sampling_parameters: SamplingParameters::default(),
             viewport:(0, 0)
         };
-        Self {window: None, wgpu_state: None, renderer: None, scene, render_parameters }
+        Self {window: None,
+            wgpu_state: None,
+            renderer: None,
+            scene,
+            render_parameters,
+        }
     }
 }
 
@@ -42,10 +45,6 @@ impl ApplicationHandler for App<'_> {
             self.window = Some(window.clone());
 
             self.wgpu_state = WgpuState::new(window.clone());
-            // let win = event_loop.create_window(WindowAttributes::default()).expect("lol");
-            // let mut imgui = Context::create();
-            // let mut platform = WinitPlatform::init(& mut imgui);
-            // platform.attach_window(imgui.io_mut(), &win, HiDpiMode::Default);
 
             let mut size = {
                 let viewport = window.inner_size();
@@ -81,8 +80,28 @@ impl ApplicationHandler for App<'_> {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, 
                     window_id: WindowId, event: WindowEvent) {
+
         if self.window.as_ref().unwrap().id() != window_id { return; }
-        if !self.renderer.as_mut().unwrap().input(&event) {
+        let renderer = self.renderer.as_mut().unwrap();
+        // let platform = self.platform.as_mut().unwrap();
+        // let imgui = self.imgui.as_mut().unwrap();
+
+        if !renderer.input(&event) {
+            // platform.handle_window_event(
+            //     imgui.io_mut(), &self.window.as_ref().unwrap().clone(), &event);
+            //
+            // {
+            //     let dt = self.last_time.elapsed().as_secs_f32();
+            //     let now = Instant::now();
+            //
+            //     // fps_counter.update(dt);
+            //     // fly_camera_controller.after_events(render_params.viewport_size, 2.0 * dt);
+            //
+            //     imgui.io_mut().update_delta_time(now - self.last_time);
+            //
+            //     self.last_time = now;
+            // }
+
             match event {
                 WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
                     event: KeyEvent {
@@ -93,7 +112,8 @@ impl ApplicationHandler for App<'_> {
                     ..
                 } => {
                     event_loop.exit();
-                },
+                }
+
                 WindowEvent::Resized(new_size) => {
                     if let (Some(renderer), Some(state)) =
                         (self.renderer.as_mut(), self.wgpu_state.as_mut()) {
@@ -105,9 +125,11 @@ impl ApplicationHandler for App<'_> {
                                         &self.render_parameters);
                         self.window.as_ref().unwrap().request_redraw();
                     }
-                },
+                }
+
+
                 WindowEvent::RedrawRequested => {
-                    self.window.as_ref().unwrap().request_redraw();
+                    let _window= self.window.as_ref().unwrap();
 
                     if let (Some(renderer), Some(state)) =
                         (self.renderer.as_mut(), self.wgpu_state.as_mut()) {
@@ -186,13 +208,13 @@ impl<'a> WgpuState<'a> {
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8Unorm, // surface_format,
+            format: wgpu::TextureFormat::Bgra8Unorm,
             width: size.0,
             height: size.1,
             present_mode: surface_capabilities.present_modes[0],
             alpha_mode: surface_capabilities.alpha_modes[0],
             view_formats: vec![],
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
         };
 
         Some(Self {
@@ -211,7 +233,7 @@ pub struct SamplingParameters {
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        Self { samples_per_pixel: 50_u32, num_bounces: 5_u32 }
+        Self { samples_per_pixel: 100_u32, num_bounces: 50_u32 }
     }
 }
 

@@ -12,5 +12,3 @@ pollster = "0.3.0"
 bytemuck = { version = "1.16.1", features = ["derive"] }
 glam = "0.28.0"
 rand = "0.9.0-alpha.1"
-#imgui = "0.12.0"
-#imgui-winit-support = "0.12.0"

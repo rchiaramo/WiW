@@ -42,10 +42,10 @@ struct SamplingParameters {
 }
 
 @group(0) @binding(0) var color_buffer: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(1) var<uniform> camera: CameraData;
-@group(0) @binding(2) var<uniform> sampling_parameters: SamplingParameters;
-@group(0) @binding(3) var<storage, read> spheres: array<Sphere>;
-@group(0) @binding(4) var<storage, read> materials: array<Material>;
+@group(1) @binding(0) var<storage, read> spheres: array<Sphere>;
+@group(1) @binding(1) var<storage, read> materials: array<Material>;
+@group(2) @binding(0) var<uniform> camera: CameraData;
+@group(2) @binding(1) var<uniform> sampling_parameters: SamplingParameters;
 @compute @workgroup_size(1,1,1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
 
@@ -130,7 +130,6 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
         *hit = tempHitPayload;
         return true;
     }
-
     return false;
 }
 
@@ -161,9 +160,13 @@ fn hit(ray: Ray, sphereIdx: u32, t_min: f32, t_nearest: f32, payload: ptr<functi
     }
     return false;
 }
-// need to add attenuation here
+
 fn hitSphere(t: f32, ray: Ray, sphere: Sphere, idx: u32) -> HitPayload {
     // make the hitPayload struct
+    // note that decision here is that normals ALWAYS point out of the sphere
+    // thus, to test whether a ray in intersecting the sphere from the inside vs the outside,
+    // the dot product of the ray direction and the normal is evaluated;  if negative, ray comes
+    // from outside; if positive, ray comes from within
     let p: vec3f = ray.origin + t * ray.direction;
     let n: vec3f = normalize(p - sphere.center.xyz);
 
@@ -175,7 +178,7 @@ fn getRay(pixel_00: vec3f, x: u32, y: u32, du: vec3f, dv: vec3f, state: ptr<func
 
     var ray: Ray;
     ray.origin = camera.pos + offset.x * du + offset.y * dv;
-    ray.direction = normalize(pixel_00 + f32(x) * du + f32(y) * dv - camera.pos);
+    ray.direction = normalize(pixel_00 + f32(x) * du + f32(y) * dv - ray.origin);
     return ray;
 }
 
@@ -201,15 +204,58 @@ fn getScatterRay(inRay: Ray, mat_idx: u32, hit: ptr<function, HitPayload>, state
             ray.direction = reflect(inRay.direction, payLoad.n) + fuzz * randomBounce;
         }
         case 2u {
+            let refract_idx: f32 = materials[mat_idx].refract_idx;
+            var norm: vec3f = payLoad.n;
+            let uv = normalize(inRay.direction);
+            let cosTheta: f32 = min(dot(norm, -uv), 1.0); // as uv represents incoming, -uv is outgoing direction
+            var etaOverEtaPrime: f32;
 
+            // if cosTheta is greater than zero, incoming ray and outward normal are opposite direction, which means
+            // ray is coming from outside into object
+            if cosTheta >= 0.0 {
+                etaOverEtaPrime = 1.0 / refract_idx;
+            } else {
+            // otherwise, we are inside the object and hitting the inner boundary; flip the normal for proper refract
+            // calculation
+                etaOverEtaPrime = refract_idx;
+                norm *= -1.0;
+            }
+
+            let reflectance: f32 = schlick(cosTheta, etaOverEtaPrime);
+            var refractDirection: vec3f = vec3f(0.0);
+
+            if refract(uv, norm, etaOverEtaPrime, &refractDirection) {
+//                if reflectance > rngNextFloat(state) {
+//                    ray.direction = reflect(uv, payLoad.n);
+//                } else {
+                    ray.direction = normalize(refractDirection);
+//                }
+            } else {
+                ray.direction = reflect(uv, payLoad.n);
+            }
         }
     }
-
     return ray;
+}
+
+fn schlick(cosine: f32, refractionIndex: f32) -> f32 {
+    var r0 = (1f - refractionIndex) / (1f + refractionIndex);
+    r0 = r0 * r0;
+    return r0 + (1f - r0) * pow((1f - cosine), 5f);
 }
 
 fn reflect(r: vec3f, n: vec3f) -> vec3f {
     return r - 2.0 * dot(r,n) * n;
+}
+
+fn refract(uv: vec3f, n: vec3f, ri: f32, dir: ptr<function, vec3f>) -> bool {
+    let cosTheta: f32 = dot(uv, n);
+    let k: f32 = 1 - ri * ri * (1 - cosTheta * cosTheta);
+    if k >= 0.0 {
+        *dir = ri * uv - (ri * cosTheta + sqrt(k)) * n;
+        return true;
+    }
+    return false;
 }
 
 fn rngNextInUnitHemisphere(state: ptr<function, u32>) -> vec3<f32> {
