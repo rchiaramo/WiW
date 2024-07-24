@@ -1,4 +1,3 @@
-use glam::{Vec4};
 use wgpu::{BindGroupDescriptor, BindGroupEntry,
            BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType,
            Buffer, BufferBindingType, BufferUsages, Device, Queue,
@@ -9,6 +8,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::WindowEvent;
 use crate::app::{RenderParameters, SamplingParameters};
 use crate::{Camera, Scene};
+use crate::gpu_structs::{GPUCamera, get_gpu_sampling_params};
 
 pub struct RayTracer {
     camera_buffer: Buffer,
@@ -99,7 +99,8 @@ impl RayTracer {
         surface_config.height = height;
         surface.configure(device, surface_config);
 
-        let scene_parameters = get_gpu_camera(&render_parameters.camera);
+        let scene_parameters = GPUCamera::new(&render_parameters.camera,
+                                              render_parameters.viewport);
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[scene_parameters]));
     }
 
@@ -316,11 +317,11 @@ fn create_parameters_bind_group(device: &Device,
     // initialize the camera buffer
     let camera_desc = wgpu::BufferDescriptor {
         label: Some("camera uniform buffer"),
-        size: 64,
+        size: 128,
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     };
-    let camera = get_gpu_camera(&render_parameters.camera);
+    let camera = GPUCamera::new(&render_parameters.camera, render_parameters.viewport);
     let camera_buffer = device.create_buffer(&camera_desc);
     queue.write_buffer(&camera_buffer, 0, bytemuck::cast_slice(&[camera]));
 
@@ -332,9 +333,12 @@ fn create_parameters_bind_group(device: &Device,
         mapped_at_creation: false,
     };
 
-    let sampling_parameters = get_gpu_sampling_params(&render_parameters.sampling_parameters);
+    let sampling_parameters = get_gpu_sampling_params(
+        &render_parameters.sampling_parameters);
     let sampling_parameters_buffer = device.create_buffer(&sampling_param_desc);
-    queue.write_buffer(&sampling_parameters_buffer, 0, bytemuck::cast_slice(&[sampling_parameters]));
+    queue.write_buffer(&sampling_parameters_buffer,
+                       0,
+                       bytemuck::cast_slice(&[sampling_parameters]));
 
     let parameters_bind_group_layout = device.create_bind_group_layout(
         &BindGroupLayoutDescriptor {
@@ -498,40 +502,3 @@ fn create_display_pipeline(
 }
 
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-struct GPUCamera {
-    camera_position: Vec4,
-    camera_forwards: Vec4,
-    camera_right: Vec4,
-    camera_up: Vec4,
-}
-unsafe impl bytemuck::Pod for GPUCamera {}
-unsafe impl bytemuck::Zeroable for GPUCamera {}
-
-fn get_gpu_camera(camera: &Camera) -> GPUCamera {
-    GPUCamera {
-        camera_position: camera.position.extend(0.0),
-        camera_forwards: camera.forwards.extend(0.0),
-        camera_right: camera.right.extend(0.0),
-        camera_up: camera.up.extend(0.0),
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct GPUSamplingParameters {
-    samples_per_pixel: u32,
-    num_bounces: u32,
-}
-
-// right now this is silly, but later when we add fields to this struct,
-// we may have to do some padding for GPU
-fn get_gpu_sampling_params(sampling_parameters: &SamplingParameters)
-    -> GPUSamplingParameters
-{
-    GPUSamplingParameters {
-        samples_per_pixel: sampling_parameters.samples_per_pixel,
-        num_bounces: sampling_parameters.num_bounces,
-    }
-}

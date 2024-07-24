@@ -30,10 +30,14 @@ struct HitPayload {
 }
 
 struct CameraData {
-    pos: vec3f,
-    forwards: vec3f,
-    right: vec3f,
-    up: vec3f,
+    pos: vec4f,
+    forwards: vec4f,
+    right: vec4f,
+    up: vec4f,
+    pixel_00: vec4f,
+    du: vec4f,
+    dv: vec4f,
+    defocusRadius: f32
 }
 
 struct SamplingParameters {
@@ -52,23 +56,23 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let image_size: vec2<u32> = textureDimensions(color_buffer);
     let screen_pos = id.xy;
 
-    let viewport_height: f32 = 2.0;
-    let viewport_width: f32 = viewport_height * (f32(image_size.x) / f32(image_size.y));
-    // need to change this when the camera starts moving...
-    let viewport_u: vec3f = vec3f(viewport_width, 0.0, 0.0);
-    let viewport_v: vec3f = vec3f(0.0, -viewport_height, 0.0);
-
-    let du: vec3f = vec3f(viewport_width / f32(image_size.x), 0.0, 0.0);
-    let dv: vec3f = vec3f(0.0, -viewport_height / f32(image_size.y), 0.0);
-
-    let upper_left: vec3f = camera.pos + camera.forwards - viewport_u / 2.0 - viewport_v / 2.0;
-    let pixel_00: vec3f = upper_left + du/2.0 + dv/2.0;
+//    let viewport_height: f32 = 2.0;
+//    let viewport_width: f32 = viewport_height * (f32(image_size.x) / f32(image_size.y));
+//    // need to change this when the camera starts moving...
+//    let viewport_u: vec3f = vec3f(viewport_width, 0.0, 0.0);
+//    let viewport_v: vec3f = vec3f(0.0, -viewport_height, 0.0);
+//
+//    let du: vec3f = vec3f(viewport_width / f32(image_size.x), 0.0, 0.0);
+//    let dv: vec3f = vec3f(0.0, -viewport_height / f32(image_size.y), 0.0);
+//
+//    let upper_left: vec3f = camera.pos + camera.forwards - viewport_u / 2.0 - viewport_v / 2.0;
+//    let pixel_00: vec3f = upper_left + du/2.0 + dv/2.0;
 
     // start here with main loop; for this position, loop over samples_per_pixel
     var pixel_color: vec3f = vec3f(0.0, 0.0, 0.0);
     var rng_state:u32 = initRng(screen_pos, image_size, 1u);
     for (var i: u32 = 0; i < sampling_parameters.samples_per_pixel; i++) {
-        var ray: Ray = getRay(pixel_00, id.x, id.y, du, dv, &rng_state);
+        var ray: Ray = getRay(camera.pixel_00.xyz, id.x, id.y, camera.du.xyz, camera.dv.xyz, &rng_state);
         pixel_color += rayColor(ray, &rng_state);
     }
     pixel_color = pixel_color / f32(sampling_parameters.samples_per_pixel);
@@ -92,10 +96,9 @@ fn rayColor(primaryRay: Ray, state: ptr<function, u32>) -> vec3<f32> {
         if TraceRay(nextRay, &payLoad) {
             // depending on what kind of material, I need to find the scatter ray and the attenuation
             let mat_idx:u32 = spheres[payLoad.idx].mat_idx;
-            let scatterRay: Ray = getScatterRay(nextRay, mat_idx, &payLoad, state);
+            getScatterRay(&nextRay, mat_idx, &payLoad, state);
 
             throughput *= materials[mat_idx].albedo.xyz;
-            nextRay = scatterRay;
         } else {
             let a: f32 = 0.5 * (primaryRay.direction.y + 1.0);
             pixel_color = throughput * ((1.0 - a) * vec3f(1.0, 1.0, 1.0) + a * vec3f(0.5, 0.7, 1.0));
@@ -174,68 +177,87 @@ fn hitSphere(t: f32, ray: Ray, sphere: Sphere, idx: u32) -> HitPayload {
 }
 
 fn getRay(pixel_00: vec3f, x: u32, y: u32, du: vec3f, dv: vec3f, state: ptr<function, u32>) -> Ray {
-    let offset: vec3f = rngNextVec3InUnitDisk(state);
-
+    var offset: vec3f = rngNextVec3InUnitDisk(state);
     var ray: Ray;
-    ray.origin = camera.pos + offset.x * du + offset.y * dv;
-    ray.direction = normalize(pixel_00 + f32(x) * du + f32(y) * dv - ray.origin);
+    if camera.defocusRadius < 0.0 {
+        ray.origin = camera.pos.xyz;
+    } else {
+        ray.origin = camera.pos.xyz + offset.x * camera.defocusRadius * camera.right.xyz +
+            offset.x * camera.defocusRadius * camera.up.xyz;
+    }
+
+    offset = rngNextVec3InUnitDisk(state);
+    ray.direction = normalize(pixel_00 + (f32(x) + offset.x) * du + (f32(y) + offset.y) * dv - ray.origin);
     return ray;
 }
 
-fn getScatterRay(inRay: Ray, mat_idx: u32, hit: ptr<function, HitPayload>, state: ptr<function, u32>) -> Ray {
+fn getScatterRay(inRay: ptr<function, Ray>,
+mat_idx: u32,
+hit: ptr<function,
+HitPayload>,
+state: ptr<function, u32>) {
+    // when we show up here, hit.n is necessarily the outward normal of the sphere
+    // we need to orient it correctly
     let payLoad = *hit;
     var ray = Ray();
-    ray.origin = payLoad.p + 0.0001 * payLoad.n;
+    ray.origin = payLoad.p; // + 0.0001 * payLoad.n;
 
     let mat_type: u32 = materials[mat_idx].mat_type;
 
     switch (mat_type) {
         case 0u, default {
             var randomBounce: vec3f = normalize(rngNextVec3InUnitSphere(state));
-            if dot(randomBounce, payLoad.n) < 0.0 {
-                randomBounce *= -1.0;
-            }
+
             // TODO! need to do something about a random bounce in opposite direction of normal
             ray.direction = payLoad.n + randomBounce;
+            if length(ray.direction) < 0.001 {
+                ray.direction = payLoad.n;
+            }
         }
         case 1u {
             var randomBounce: vec3f = normalize(rngNextVec3InUnitSphere(state));
             let fuzz: f32 = materials[mat_idx].fuzz;
-            ray.direction = reflect(inRay.direction, payLoad.n) + fuzz * randomBounce;
+            ray.direction = reflect((*inRay).direction, payLoad.n) + fuzz * randomBounce;
         }
         case 2u {
             let refract_idx: f32 = materials[mat_idx].refract_idx;
             var norm: vec3f = payLoad.n;
-            let uv = normalize(inRay.direction);
-            let cosTheta: f32 = min(dot(norm, -uv), 1.0); // as uv represents incoming, -uv is outgoing direction
-            var etaOverEtaPrime: f32;
+            let uv = normalize((*inRay).direction);
+            var cosTheta: f32 = min(dot(norm, -uv), 1.0); // as uv represents incoming, -uv is outgoing direction
+            var etaOverEtaPrime: f32 = 0.0;
 
-            // if cosTheta is greater than zero, incoming ray and outward normal are opposite direction, which means
-            // ray is coming from outside into object
+            // in old code, the normal vector was always determined at the time of hit and properly directioned
+            // i.e. I determined if the hit was on the outside/front face by taking dot product of imcoming ray with
+            // the normal; if it was negative front_face was false and norm *= -1, so normal pointed inward
+            // in the case of a ray from inside hitting, dot(-inDir, norm) would be positive
+            //
+            // now i'm not doing that; so first I need to see if dot(norm, -uv) > 0, ie the incoming ray is on the
+            // outside, as norm is ALWAYS facing outward; if so, use 1/refract_index
             if cosTheta >= 0.0 {
                 etaOverEtaPrime = 1.0 / refract_idx;
             } else {
-            // otherwise, we are inside the object and hitting the inner boundary; flip the normal for proper refract
-            // calculation
+            // however, if dot(norm, -uv) < 0, the incoming ray is on the inside; now I need to flip the norm to face
+            // inside; my initial calc of cosTheta is also off by a sign as the norm wasn't pointing the right way
                 etaOverEtaPrime = refract_idx;
                 norm *= -1.0;
+                cosTheta *= -1.0;
             }
 
             let reflectance: f32 = schlick(cosTheta, etaOverEtaPrime);
             var refractDirection: vec3f = vec3f(0.0);
 
             if refract(uv, norm, etaOverEtaPrime, &refractDirection) {
-//                if reflectance > rngNextFloat(state) {
-//                    ray.direction = reflect(uv, payLoad.n);
-//                } else {
-                    ray.direction = normalize(refractDirection);
-//                }
+                if reflectance > rngNextFloat(state) {
+                    ray.direction = reflect(uv, norm);
+                } else {
+                    ray.direction = refractDirection;
+                }
             } else {
-                ray.direction = reflect(uv, payLoad.n);
+                ray.direction = reflect(uv, norm);
             }
         }
     }
-    return ray;
+    *inRay = ray;
 }
 
 fn schlick(cosine: f32, refractionIndex: f32) -> f32 {

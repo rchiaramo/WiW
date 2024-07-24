@@ -5,6 +5,7 @@ mod camera;
 mod util_funcs;
 mod raytracer;
 mod material;
+mod gpu_structs;
 
 pub use app::App;
 pub use sphere::Sphere;

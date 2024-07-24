@@ -14,11 +14,12 @@ pub struct App<'a> {
     renderer: Option<RayTracer>,
     scene: Scene,
     render_parameters: RenderParameters,
+    cursor_position: winit::dpi::PhysicalPosition<f64>
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
-        let scene = Scene::new();
+        let scene = Scene::book_one_final();
         let camera = Camera::default();
         let render_parameters = RenderParameters {
             camera,
@@ -30,6 +31,7 @@ impl Default for App<'_> {
             renderer: None,
             scene,
             render_parameters,
+            cursor_position: winit::dpi::PhysicalPosition::default()
         }
     }
 }
@@ -80,28 +82,12 @@ impl ApplicationHandler for App<'_> {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, 
                     window_id: WindowId, event: WindowEvent) {
+        let window = self.window.as_ref().unwrap();
+        if window.id() != window_id { return; }
 
-        if self.window.as_ref().unwrap().id() != window_id { return; }
         let renderer = self.renderer.as_mut().unwrap();
-        // let platform = self.platform.as_mut().unwrap();
-        // let imgui = self.imgui.as_mut().unwrap();
 
         if !renderer.input(&event) {
-            // platform.handle_window_event(
-            //     imgui.io_mut(), &self.window.as_ref().unwrap().clone(), &event);
-            //
-            // {
-            //     let dt = self.last_time.elapsed().as_secs_f32();
-            //     let now = Instant::now();
-            //
-            //     // fps_counter.update(dt);
-            //     // fly_camera_controller.after_events(render_params.viewport_size, 2.0 * dt);
-            //
-            //     imgui.io_mut().update_delta_time(now - self.last_time);
-            //
-            //     self.last_time = now;
-            // }
-
             match event {
                 WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
                     event: KeyEvent {
@@ -123,14 +109,20 @@ impl ApplicationHandler for App<'_> {
                                         &mut state.surface,
                                         &mut state.surface_config,
                                         &self.render_parameters);
-                        self.window.as_ref().unwrap().request_redraw();
+                        window.request_redraw();
+                    }
+                }
+                WindowEvent::CursorMoved { position, ..} => {
+                    self.cursor_position = position;
+                }
+                WindowEvent::MouseInput { state, ..
+                } => {
+                    if state.is_pressed() {
+                        println!("cursor position {:?}", self.cursor_position);
                     }
                 }
 
-
                 WindowEvent::RedrawRequested => {
-                    let _window= self.window.as_ref().unwrap();
-
                     if let (Some(renderer), Some(state)) =
                         (self.renderer.as_mut(), self.wgpu_state.as_mut()) {
                             renderer.update();
@@ -233,7 +225,7 @@ pub struct SamplingParameters {
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        Self { samples_per_pixel: 100_u32, num_bounces: 50_u32 }
+        Self { samples_per_pixel: 500_u32, num_bounces: 50_u32 }
     }
 }
 
