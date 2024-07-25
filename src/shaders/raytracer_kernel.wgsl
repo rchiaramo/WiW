@@ -311,7 +311,8 @@ fn rngNextVec3InUnitDisk(state: ptr<function, u32>) -> vec3<f32> {
 fn rngNextVec3InUnitSphere(state: ptr<function, u32>) -> vec3<f32> {
     // probability density is uniformly distributed over r^3
     let r = pow(rngNextFloat(state), 0.33333f);
-    let theta = PI * rngNextFloat(state);
+    // and need to distribute theta according to arccos(U[-1,1])
+    let theta = acos(2f * rngNextFloat(state) - 1.0);
     let phi = 2.0 * PI * rngNextFloat(state);
 
     let x = r * sin(theta) * cos(phi);
@@ -332,7 +333,6 @@ fn rngNextFloat(state: ptr<function, u32>) -> f32 {
 }
 
 fn initRng(pixel: vec2<u32>, resolution: vec2<u32>, frame: u32) -> u32 {
-    // Adapted from https://github.com/boksajak/referencePT
     let seed = dot(pixel, vec2<u32>(1u, resolution.x)) ^ jenkinsHash(frame);
     return jenkinsHash(seed);
 }
