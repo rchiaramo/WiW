@@ -5,6 +5,7 @@ use winit::event_loop::{ActiveEventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use crate::{Camera, RayTracer};
+use crate::gpu_timing::QueryResults;
 use crate::scene::Scene;
 
 
@@ -126,12 +127,16 @@ impl ApplicationHandler for App<'_> {
                     if let (Some(renderer), Some(state)) =
                         (self.renderer.as_mut(), self.wgpu_state.as_mut()) {
                             renderer.update();
+                        let queries =
                             renderer.render(
                                 &mut state.surface,
                                 &state.device,
                                 &state.queue,
                                 self.render_parameters.viewport
-                            ).expect("TODO: panic message");
+                            );
+                        let raw_results = queries.wait_for_results(&state.device);
+                        println!("Raw timestamp buffer contents: {:?}", raw_results);
+                        QueryResults::from_raw_results(raw_results).print(&state.queue);
                     }
                 }
                 _ => {}
@@ -174,11 +179,26 @@ impl<'a> WgpuState<'a> {
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             }
-        ).await.unwrap();
+        ).await?;
+
+        // Check timestamp features.
+        let features = adapter.features()
+            & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+        // if features.contains(wgpu::Features::TIMESTAMP_QUERY) {
+        //     println!("Adapter supports timestamp queries.");
+        // } else {
+        //     println!("Adapter does not support timestamp queries, aborting.");
+        // }
+        // let timestamps_inside_passes = features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+        // if timestamps_inside_passes {
+        //     println!("Adapter supports timestamp queries within encoders.");
+        // } else {
+        //     println!("Adapter does not support timestamp queries within encoders.");
+        // }
 
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
+                required_features: features, // wgpu::Features::empty(),
                 required_limits: wgpu::Limits {
                     max_storage_buffer_binding_size: 512_u32 << 20,
                     ..Default::default()
@@ -225,7 +245,7 @@ pub struct SamplingParameters {
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        Self { samples_per_pixel: 500_u32, num_bounces: 50_u32 }
+        Self { samples_per_pixel: 50_u32, num_bounces: 50_u32 }
     }
 }
 
@@ -234,3 +254,6 @@ pub struct RenderParameters {
     pub sampling_parameters: SamplingParameters,
     pub viewport: (u32, u32)
 }
+
+
+

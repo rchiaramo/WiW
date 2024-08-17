@@ -6,6 +6,7 @@ mod util_funcs;
 mod raytracer;
 mod material;
 mod gpu_structs;
+mod gpu_timing;
 
 pub use app::App;
 pub use sphere::Sphere;

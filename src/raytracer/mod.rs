@@ -1,13 +1,9 @@
-use wgpu::{BindGroupDescriptor, BindGroupEntry,
-           BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType,
-           Buffer, BufferBindingType, BufferUsages, Device, Queue,
-           RenderPipeline, ShaderStages, StorageTextureAccess,
-           Surface, SurfaceConfiguration, TextureDimension,
-           TextureFormat, TextureView, TextureViewDimension};
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, ComputePassTimestampWrites, Device, Queue, RenderPassTimestampWrites, RenderPipeline, ShaderStages, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView, TextureViewDimension};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::WindowEvent;
 use crate::app::{RenderParameters, SamplingParameters};
 use crate::{Camera, Scene};
+use crate::gpu_timing::{Queries, QueryResults};
 use crate::gpu_structs::{GPUCamera, get_gpu_sampling_params};
 
 pub struct RayTracer {
@@ -129,9 +125,8 @@ impl RayTracer {
                   device: & Device,
                   queue: & Queue,
                   size: (u32, u32)
-    ) -> Result<(), wgpu::SurfaceError> {
-
-        let output = surface.get_current_texture()?;
+    ) -> Queries {
+        let output = surface.get_current_texture().unwrap();
         let view = output.texture.create_view(
             &wgpu::TextureViewDescriptor::default());
 
@@ -140,18 +135,26 @@ impl RayTracer {
                 label: Some("Render Encoder"),
             });
 
+        let mut queries = Queries::new(device,QueryResults::NUM_QUERIES);
+        encoder.write_timestamp(&queries.set, queries.next_unused_query);
+        queries.next_unused_query += 1;
+
         {
-            let mut ray_tracing_pass = encoder.begin_compute_pass(
-                &wgpu::ComputePassDescriptor {
-                    label: Some("Compute pass"),
-                    timestamp_writes: None,
-                }
-            );
+            let mut ray_tracing_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Compute pass"),
+                timestamp_writes: Some(ComputePassTimestampWrites {
+                    query_set: &queries.set,
+                    beginning_of_pass_write_index: Some(queries.next_unused_query),
+                    end_of_pass_write_index: Some(queries.next_unused_query + 1),
+                })
+            });
+            queries.next_unused_query += 2;
             ray_tracing_pass.set_pipeline(&self.ray_tracer_pipeline);
             ray_tracing_pass.set_bind_group(0, &self.image_bind_group, &[]);
             ray_tracing_pass.set_bind_group(1, &self.scene_bind_group, &[]);
             ray_tracing_pass.set_bind_group(2, &self.parameters_bind_group, &[]);
             ray_tracing_pass.dispatch_workgroups(size.0, size.1, 1);
+
         }
 
         {
@@ -168,16 +171,26 @@ impl RayTracer {
                     })],
                     depth_stencil_attachment: None,
                     occlusion_query_set: None,
-                    timestamp_writes: None,
+                    timestamp_writes: Some(RenderPassTimestampWrites {
+                        query_set: &queries.set,
+                        beginning_of_pass_write_index: Some(queries.next_unused_query),
+                        end_of_pass_write_index: Some(queries.next_unused_query + 1),
+                    })
                 });
+            queries.next_unused_query += 2;
             render_pass.set_pipeline(&self.display_pipeline);
             render_pass.set_bind_group(0, &self.display_pipeline_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
 
+        encoder.write_timestamp(&queries.set, queries.next_unused_query);
+        queries.next_unused_query += 1;
+
+        queries.resolve(&mut encoder);
         queue.submit(Some(encoder.finish()));
         output.present();
-        Ok(())
+
+        queries
     }
 }
 
