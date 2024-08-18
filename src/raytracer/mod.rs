@@ -1,14 +1,17 @@
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, ComputePassTimestampWrites, Device, Queue, RenderPassTimestampWrites, RenderPipeline, ShaderStages, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView, TextureViewDimension};
+use std::collections::HashMap;
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, ComputePassTimestampWrites, Device, PipelineCompilationOptions, Queue, RenderPassTimestampWrites, RenderPipeline, ShaderStages, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView, TextureViewDimension};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::WindowEvent;
 use crate::app::{RenderParameters, SamplingParameters};
 use crate::{Camera, Scene};
+use crate::bvh::{BVHNode, BVHTree};
 use crate::gpu_timing::{Queries, QueryResults};
 use crate::gpu_structs::{GPUCamera, get_gpu_sampling_params};
 
 pub struct RayTracer {
     camera_buffer: Buffer,
     sampling_parameters_buffer: Buffer,
+    bvh_buffer: Buffer,
     image_bind_group: wgpu::BindGroup,
     scene_bind_group: wgpu::BindGroup,
     parameters_bind_group: wgpu::BindGroup,
@@ -23,7 +26,8 @@ impl RayTracer {
                surface_config: &SurfaceConfiguration,
                render_parameters: &RenderParameters,
                scene: &Scene,
-               max_image_size: (u32, u32)) -> Option<Self> {
+               max_image_size: (u32, u32),
+               bvh_tree: &BVHTree) -> Option<Self> {
 
         // create the image_buffer that the compute shader will use to store image
         let (image_bind_group,
@@ -38,8 +42,8 @@ impl RayTracer {
         let (parameters_bind_group,
             parameter_bind_group_layout,
             camera_buffer,
-            sampling_parameters_buffer)
-            = create_parameters_bind_group(device, queue, render_parameters);
+            sampling_parameters_buffer, bvh_buffer)
+            = create_parameters_bind_group(device, queue, render_parameters, bvh_tree);
 
         let ray_tracer_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -56,14 +60,19 @@ impl RayTracer {
         let shader = device.create_shader_module(
             wgpu::include_wgsl!("../shaders/raytracer_kernel.wgsl")
         );
-
+        let mut id:HashMap<String, f64> = HashMap::new();
+        id.insert("stackSize".to_string(), bvh_tree.tree.len() as f64);
         let ray_tracer_pipeline = device.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
                 label: Some("ray tracer pipeline"),
                 layout: Some(&ray_tracer_pipeline_layout),
                 module: &shader,
                 entry_point: "main",
-                compilation_options: Default::default(),
+                compilation_options: PipelineCompilationOptions {
+                    constants: &id,
+                    zero_initialize_workgroup_memory: false,
+                    vertex_pulling_transform: false,
+                }, // Default::default(),
                 cache: None,
             }
         );
@@ -74,6 +83,7 @@ impl RayTracer {
         Some(Self {
             camera_buffer,
             sampling_parameters_buffer,
+            bvh_buffer,
             image_bind_group,
             scene_bind_group,
             parameters_bind_group,
@@ -325,8 +335,9 @@ fn create_scene_bind_group(device: &Device, scene: &Scene)
 
 fn create_parameters_bind_group(device: &Device,
                                 queue: &Queue,
-                                render_parameters: &RenderParameters)
-    -> (wgpu::BindGroup, wgpu::BindGroupLayout, Buffer, Buffer) {
+                                render_parameters: &RenderParameters,
+                                bvh_tree: &BVHTree)
+    -> (wgpu::BindGroup, wgpu::BindGroupLayout, Buffer, Buffer, Buffer) {
     // initialize the camera buffer
     let camera_desc = wgpu::BufferDescriptor {
         label: Some("camera uniform buffer"),
@@ -353,6 +364,22 @@ fn create_parameters_bind_group(device: &Device,
                        0,
                        bytemuck::cast_slice(&[sampling_parameters]));
 
+    // initialize the bvh_tree buffer
+    let tree = &bvh_tree.tree;
+    let bvh_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("BVH storage buffer"),
+        contents: bytemuck::cast_slice(tree.as_slice()),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+    });
+    // let bvh_desc = wgpu::BufferDescriptor {
+    //     label: Some("BVH Tree uniform buffer"),
+    //     size: 32,
+    //     usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+    //     mapped_at_creation: false,
+    // };
+    // let bvh_buffer = device.create_buffer(&bvh_desc);
+    queue.write_buffer(&bvh_buffer, 0, bytemuck::cast_slice(tree.as_slice()));
+
     let parameters_bind_group_layout = device.create_bind_group_layout(
         &BindGroupLayoutDescriptor {
             label: Some("parameters bind group layout"),
@@ -376,8 +403,29 @@ fn create_parameters_bind_group(device: &Device,
                         min_binding_size: None,
                     },
                     count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 }
+                // BindGroupLayoutEntry {
+                //     binding: 2,
+                //     visibility: ShaderStages::COMPUTE,
+                //     ty: BindingType::Buffer {
+                //         ty: BufferBindingType::Uniform,
+                //         has_dynamic_offset: false,
+                //         min_binding_size: None,
+                //     },
+                //     count: None,
+                // }
             ],
+
         }
     );
 
@@ -393,12 +441,16 @@ fn create_parameters_bind_group(device: &Device,
                 BindGroupEntry {
                     binding: 1,
                     resource: sampling_parameters_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: bvh_buffer.as_entire_binding(),
                 }
             ],
         }
     );
 
-    (parameters_bind_group, parameters_bind_group_layout, camera_buffer, sampling_parameters_buffer)
+    (parameters_bind_group, parameters_bind_group_layout, camera_buffer, sampling_parameters_buffer, bvh_buffer)
 }
 
 fn create_display_pipeline(

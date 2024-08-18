@@ -7,6 +7,7 @@ use winit::window::{Window, WindowId};
 use crate::{Camera, RayTracer};
 use crate::gpu_timing::QueryResults;
 use crate::scene::Scene;
+use crate::bvh::BVHTree;
 
 
 pub struct App<'a> {
@@ -15,13 +16,16 @@ pub struct App<'a> {
     renderer: Option<RayTracer>,
     scene: Scene,
     render_parameters: RenderParameters,
-    cursor_position: winit::dpi::PhysicalPosition<f64>
+    cursor_position: winit::dpi::PhysicalPosition<f64>,
+    bvh_tree: BVHTree,
 }
 
 impl Default for App<'_> {
     fn default() -> Self {
-        let scene = Scene::book_one_final();
+        let mut scene = Scene::book_one_final();
         let camera = Camera::default();
+        let mut bvh_tree = BVHTree::new(scene.spheres.len());
+        bvh_tree.build_bvh_tree(&mut scene.spheres);
         let render_parameters = RenderParameters {
             camera,
             sampling_parameters: SamplingParameters::default(),
@@ -32,7 +36,8 @@ impl Default for App<'_> {
             renderer: None,
             scene,
             render_parameters,
-            cursor_position: winit::dpi::PhysicalPosition::default()
+            cursor_position: winit::dpi::PhysicalPosition::default(),
+            bvh_tree
         }
     }
 }
@@ -75,7 +80,8 @@ impl ApplicationHandler for App<'_> {
                     &state.surface_config,
                     &self.render_parameters,
                     &self.scene,
-                    self.render_parameters.viewport
+                    self.render_parameters.viewport,
+                    &self.bvh_tree,
                 );
             }
         }
@@ -245,7 +251,7 @@ pub struct SamplingParameters {
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        Self { samples_per_pixel: 50_u32, num_bounces: 50_u32 }
+        Self { samples_per_pixel: 500_u32, num_bounces: 50_u32 }
     }
 }
 

@@ -3,6 +3,14 @@ const EPSILON = 0.001f;
 const PI = 3.1415927f;
 const FRAC_1_PI = 0.31830987f;
 const FRAC_PI_2 = 1.5707964f;
+const USE_BVH = false;
+
+struct BVHNode {
+    aabbMin: vec3f,
+    aabbMax: vec3f,
+    leftFirst: u32,
+    primCount: u32,
+}
 
 struct Sphere {
     center: vec4f,
@@ -18,8 +26,8 @@ struct Material {
 }
 
 struct Ray {
-    origin: vec3<f32>,
-    direction: vec3<f32>,
+    origin: vec3f,
+    direction: vec3f,
 }
 
 struct HitPayload {
@@ -45,11 +53,15 @@ struct SamplingParameters {
     num_bounces: u32
 }
 
+const STACKSIZEGUESS:u32 = 1000;
+
 @group(0) @binding(0) var color_buffer: texture_storage_2d<rgba8unorm, write>;
 @group(1) @binding(0) var<storage, read> spheres: array<Sphere>;
 @group(1) @binding(1) var<storage, read> materials: array<Material>;
 @group(2) @binding(0) var<uniform> camera: CameraData;
 @group(2) @binding(1) var<uniform> sampling_parameters: SamplingParameters;
+@group(2) @binding(2) var<storage, read> bvhTree: array<BVHNode>;
+override stackSize:u32;
 @compute @workgroup_size(1,1,1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
 
@@ -117,16 +129,80 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
     let sphere_count = arrayLength(&spheres);
     var tempHitPayload = HitPayload();
 
-    for (var i: u32 = 0; i < sphere_count; i++) {
-        var newHitPayload = HitPayload();
+    if USE_BVH {
+        // this is where I will implement the BVH tree search rather than using a full primitive search
+//        override stackSize:u32 = arrayLength(&bvhTree);
+        var stack = array<BVHNode, STACKSIZEGUESS>();
+        var stackPointer:u32 = 0;
+        var node = bvhTree[0];
+        while true {
+            if node.primCount > 0 {
+                // this is a leaf and has primitives, so check to see if primitives are hit
+                for (var idx:u32 = 0; idx < node.primCount; idx++) {
+                    var newHitPayload = HitPayload();
+                    if hit(ray, node.leftFirst + idx, 0.001, nearest_hit, &newHitPayload) {
+                        nearest_hit = newHitPayload.t;
+                        tempHitPayload = newHitPayload;
+                    }
+                }
+                if stackPointer == 0 {
+                    break;
+                } else {
+                    stackPointer--;
+                    node = stack[stackPointer];
+                    continue;
+                }
+            }
+            // if not a leaf, check to see if this node has been hit
+            var t:f32 = 0.0;
+            if hit_bvh_node(node, ray, nearest_hit, &t) {
+                // if hit, we want to evaluate the left and right nodes
+                let leftChild = bvhTree[node.leftFirst];
+                let rightChild = bvhTree[node.leftFirst + 1];
+                var t_left:f32 = 0.0;
+                var t_right:f32 = 0.0;
+                let l_hit = hit_bvh_node(leftChild, ray, nearest_hit, &t_left);
+                let r_hit = hit_bvh_node(rightChild, ray, nearest_hit, &t_right);
 
-        // I could update this code so that hit only determines if a hit happened and, if it did,
-        // modifies the nearest_hit_t and stores the nearest_index
-        if hit(ray, i, 0.001, nearest_hit, &newHitPayload) {
-            nearest_hit = newHitPayload.t;
-            tempHitPayload = newHitPayload;
+                // make the new node one of them and push the other onto the stack if both hit
+                if l_hit && r_hit {
+                    if t_left < t_right {
+                        node = leftChild;
+                        stack[stackPointer] = rightChild;
+                        stackPointer++;
+                    } else {
+                        node = rightChild;
+                        stack[stackPointer] = leftChild;
+                        stackPointer++;
+                    }
+                } else if l_hit {
+                    node = leftChild;
+                } else if r_hit {
+                    node = rightChild;
+                } else {
+                    if stackPointer == 0 {
+                    break;
+                    } else {
+                        node = stack[stackPointer];
+                        stackPointer--;
+                    }
+                }
+            }
+        }
+    } else {
+        // this is the old code with full primitive search
+        for (var i: u32 = 0; i < sphere_count; i++) {
+            var newHitPayload = HitPayload();
+
+            // I could update this code so that hit only determines if a hit happened and, if it did,
+            // modifies the nearest_hit_t and stores the nearest_index
+            if hit(ray, i, 0.001, nearest_hit, &newHitPayload) {
+                nearest_hit = newHitPayload.t;
+                tempHitPayload = newHitPayload;
+            }
         }
     }
+
     // then after looping through the objects, we will know the nearest_hit_t and the index; we could call
     // for the payload then (as opposed to filling it out every time we hit a closer sphere)
     if nearest_hit < 9999 {
@@ -134,6 +210,27 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
         return true;
     }
     return false;
+}
+
+fn hit_bvh_node(node: BVHNode, ray: Ray, nearest: f32, t: ptr<function, f32>) -> bool {
+    let t_x_min = (node.aabbMin.x - ray.origin.x) / ray.direction.x;
+    let t_x_max = (node.aabbMax.x - ray.origin.x) / ray.direction.x;
+    var tmin = min(t_x_min, t_x_max);
+    var tmax = max(t_x_min, t_x_max);
+    let t_y_min = (node.aabbMin.y - ray.origin.y) / ray.direction.y;
+    let t_y_max = (node.aabbMax.y - ray.origin.y) / ray.direction.y;
+    tmin = max(min(t_y_min, t_y_max), tmin);
+    tmax = min(max(t_y_max, t_y_min), tmax);
+    let t_z_min = (node.aabbMin.z - ray.origin.z) / ray.direction.z;
+    let t_z_max = (node.aabbMax.z - ray.origin.z) / ray.direction.z;
+    tmin = max(min(t_z_min, t_z_max), tmin);
+    tmax = min(max(t_z_max, t_z_min), tmax);
+    if tmin > tmax || tmin > nearest || tmax <= 0.0 {
+        return false;
+    } else {
+        *t = tmin;
+        return true;
+    }
 }
 
 fn hit(ray: Ray, sphereIdx: u32, t_min: f32, t_nearest: f32, payload: ptr<function, HitPayload>) -> bool {
@@ -191,16 +288,12 @@ fn getRay(pixel_00: vec3f, x: u32, y: u32, du: vec3f, dv: vec3f, state: ptr<func
     return ray;
 }
 
-fn getScatterRay(inRay: ptr<function, Ray>,
-mat_idx: u32,
-hit: ptr<function,
-HitPayload>,
-state: ptr<function, u32>) {
+fn getScatterRay(inRay: ptr<function, Ray>, mat_idx: u32, hit: ptr<function, HitPayload>, state: ptr<function, u32>) {
     // when we show up here, hit.n is necessarily the outward normal of the sphere
     // we need to orient it correctly
     let payLoad = *hit;
     var ray = Ray();
-    ray.origin = payLoad.p; // + 0.0001 * payLoad.n;
+    ray.origin = payLoad.p;
 
     let mat_type: u32 = materials[mat_idx].mat_type;
 
@@ -208,7 +301,6 @@ state: ptr<function, u32>) {
         case 0u, default {
             var randomBounce: vec3f = normalize(rngNextVec3InUnitSphere(state));
 
-            // TODO! need to do something about a random bounce in opposite direction of normal
             ray.direction = payLoad.n + randomBounce;
             if length(ray.direction) < 0.001 {
                 ray.direction = payLoad.n;
