@@ -1,6 +1,5 @@
 use crate::sphere::Sphere;
 use glam::{Vec3};
-use crate::gpu_structs::GPUCamera;
 
 const BINS: usize = 4096;
 

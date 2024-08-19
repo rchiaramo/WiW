@@ -1,10 +1,16 @@
 use std::collections::HashMap;
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, ComputePassTimestampWrites, Device, PipelineCompilationOptions, Queue, RenderPassTimestampWrites, RenderPipeline, ShaderStages, StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension, TextureFormat, TextureView, TextureViewDimension};
+use wgpu::{BindGroupDescriptor, BindGroupEntry,
+           BindGroupLayoutDescriptor, BindGroupLayoutEntry,
+           BindingType, Buffer, BufferBindingType, BufferUsages,
+           ComputePassTimestampWrites, Device, PipelineCompilationOptions,
+           Queue, RenderPassTimestampWrites, RenderPipeline, ShaderStages,
+           StorageTextureAccess, Surface, SurfaceConfiguration, TextureDimension,
+           TextureFormat, TextureView, TextureViewDimension};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::WindowEvent;
-use crate::app::{RenderParameters, SamplingParameters};
-use crate::{Camera, Scene};
-use crate::bvh::{BVHNode, BVHTree};
+use crate::app::{RenderParameters};
+use crate::{Scene};
+use crate::bvh::{BVHTree};
 use crate::gpu_timing::{Queries, QueryResults};
 use crate::gpu_structs::{GPUCamera, get_gpu_sampling_params};
 
@@ -210,7 +216,7 @@ impl RayTracer {
 }
 
 fn create_image_buffer(device: &Device, max_image_size: (u32, u32))
-                              -> (wgpu::BindGroup, wgpu::BindGroupLayout, wgpu::TextureView) {
+                              -> (wgpu::BindGroup, wgpu::BindGroupLayout, TextureView) {
     let texture_size = wgpu::Extent3d {
         width: max_image_size.0,
         height: max_image_size.1,
@@ -244,12 +250,12 @@ fn create_image_buffer(device: &Device, max_image_size: (u32, u32))
     );
 
     let image_bind_group_layout = device.create_bind_group_layout(
-        &wgpu::BindGroupLayoutDescriptor {
+        &BindGroupLayoutDescriptor {
             label: Some("image bind group layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
+                    visibility: ShaderStages::COMPUTE,
                     ty: BindingType::StorageTexture {
                         access: StorageTextureAccess::WriteOnly,
                         format: TextureFormat::Rgba8Unorm,
@@ -262,11 +268,11 @@ fn create_image_buffer(device: &Device, max_image_size: (u32, u32))
     );
 
     let image_bind_group = device.create_bind_group(
-        &wgpu::BindGroupDescriptor {
+        &BindGroupDescriptor {
             label: Some("image bind group"),
             layout: &image_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&image_buffer_view),
                 }
@@ -304,7 +310,7 @@ fn create_bvh_bind_group(device: &Device, bvh_tree: &BVHTree)
         }
     );
     let bvh_bind_group = device.create_bind_group(
-        &wgpu::BindGroupDescriptor {
+        &BindGroupDescriptor {
             label: Some("bvh bind group"),
             layout: &bvh_bind_group_layout,
             entries: &[
@@ -363,7 +369,7 @@ fn create_scene_bind_group(device: &Device, scene: &Scene)
     );
 
     let scene_bind_group = device.create_bind_group(
-        &wgpu::BindGroupDescriptor {
+        &BindGroupDescriptor {
             label: Some("scene bind group"),
             layout: &scene_bind_group_layout,
             entries: &[
@@ -415,7 +421,7 @@ fn create_parameters_bind_group(device: &Device,
         &BindGroupLayoutDescriptor {
             label: Some("parameters bind group layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 0,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
@@ -460,10 +466,10 @@ fn create_parameters_bind_group(device: &Device,
 }
 
 fn create_display_pipeline(
-    device: &wgpu::Device,
-    surface_config_format: wgpu::TextureFormat,
+    device: &Device,
+    surface_config_format: TextureFormat,
     image_buffer_view: &TextureView)
-    -> (wgpu::BindGroup, wgpu::RenderPipeline) {
+    -> (wgpu::BindGroup, RenderPipeline) {
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("Sampler"),
@@ -477,24 +483,24 @@ fn create_display_pipeline(
     });
 
     let render_bind_group_layout = device.create_bind_group_layout(
-        &wgpu::BindGroupLayoutDescriptor {
+        &BindGroupLayoutDescriptor {
             label: Some("render bind group layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(
                         wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
+                BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float {
                             filterable: true,
                         },
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                        view_dimension: TextureViewDimension::D2,
                         multisampled: false,
                     },
                     count: None,
@@ -504,15 +510,15 @@ fn create_display_pipeline(
     );
 
     let render_bind_group = device.create_bind_group(
-        &wgpu::BindGroupDescriptor {
+        &BindGroupDescriptor {
             label: Some("render bind group"),
             layout: &render_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Sampler(&sampler),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(image_buffer_view),
                 }

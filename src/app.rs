@@ -55,7 +55,7 @@ impl ApplicationHandler for App<'_> {
 
             self.wgpu_state = WgpuState::new(window.clone());
 
-            let mut size = {
+            let size = {
                 let viewport = window.inner_size();
                 (viewport.width, viewport.height)
             };
