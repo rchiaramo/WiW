@@ -23,6 +23,7 @@ pub struct App<'a> {
 impl Default for App<'_> {
     fn default() -> Self {
         let mut scene = Scene::book_one_final();
+        // scene = Scene::new();
         let camera = Camera::default();
         let mut bvh_tree = BVHTree::new(scene.spheres.len());
         bvh_tree.build_bvh_tree(&mut scene.spheres);
@@ -251,7 +252,7 @@ pub struct SamplingParameters {
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        Self { samples_per_pixel: 500_u32, num_bounces: 50_u32 }
+        Self { samples_per_pixel: 100_u32, num_bounces: 50_u32 }
     }
 }
 

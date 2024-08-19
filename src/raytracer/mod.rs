@@ -11,9 +11,9 @@ use crate::gpu_structs::{GPUCamera, get_gpu_sampling_params};
 pub struct RayTracer {
     camera_buffer: Buffer,
     sampling_parameters_buffer: Buffer,
-    bvh_buffer: Buffer,
     image_bind_group: wgpu::BindGroup,
     scene_bind_group: wgpu::BindGroup,
+    bvh_bind_group: wgpu::BindGroup,
     parameters_bind_group: wgpu::BindGroup,
     ray_tracer_pipeline: wgpu::ComputePipeline,
     display_pipeline_bind_group: wgpu::BindGroup,
@@ -38,12 +38,15 @@ impl RayTracer {
         let (scene_bind_group, scene_bind_group_layout)
             = create_scene_bind_group(device, scene);
 
+        let (bvh_bind_group, bvh_bind_group_layout)
+            = create_bvh_bind_group(device, bvh_tree);
+
         // create the parameters bind group to interact with GPU during runtime
         let (parameters_bind_group,
             parameter_bind_group_layout,
             camera_buffer,
-            sampling_parameters_buffer, bvh_buffer)
-            = create_parameters_bind_group(device, queue, render_parameters, bvh_tree);
+            sampling_parameters_buffer)
+            = create_parameters_bind_group(device, queue, render_parameters);
 
         let ray_tracer_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -51,6 +54,7 @@ impl RayTracer {
                 bind_group_layouts: &[
                     &image_bind_group_layout,
                     &scene_bind_group_layout,
+                    &bvh_bind_group_layout,
                     &parameter_bind_group_layout
                 ],
                 push_constant_ranges: &[],
@@ -61,7 +65,7 @@ impl RayTracer {
             wgpu::include_wgsl!("../shaders/raytracer_kernel.wgsl")
         );
         let mut id:HashMap<String, f64> = HashMap::new();
-        id.insert("stackSize".to_string(), bvh_tree.tree.len() as f64);
+        id.insert("stackSize".to_string(), (bvh_tree.nodes.len() - 1) as f64);
         let ray_tracer_pipeline = device.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
                 label: Some("ray tracer pipeline"),
@@ -83,9 +87,9 @@ impl RayTracer {
         Some(Self {
             camera_buffer,
             sampling_parameters_buffer,
-            bvh_buffer,
             image_bind_group,
             scene_bind_group,
+            bvh_bind_group,
             parameters_bind_group,
             ray_tracer_pipeline,
             display_pipeline,
@@ -162,7 +166,8 @@ impl RayTracer {
             ray_tracing_pass.set_pipeline(&self.ray_tracer_pipeline);
             ray_tracing_pass.set_bind_group(0, &self.image_bind_group, &[]);
             ray_tracing_pass.set_bind_group(1, &self.scene_bind_group, &[]);
-            ray_tracing_pass.set_bind_group(2, &self.parameters_bind_group, &[]);
+            ray_tracing_pass.set_bind_group(2, &self.bvh_bind_group, &[]);
+            ray_tracing_pass.set_bind_group(3, &self.parameters_bind_group, &[]);
             ray_tracing_pass.dispatch_workgroups(size.0, size.1, 1);
 
         }
@@ -271,6 +276,48 @@ fn create_image_buffer(device: &Device, max_image_size: (u32, u32))
     (image_bind_group, image_bind_group_layout, image_buffer_view)
 }
 
+fn create_bvh_bind_group(device: &Device, bvh_tree: &BVHTree)
+                           -> (wgpu::BindGroup, wgpu::BindGroupLayout) {
+    // initialize the bvh_tree buffer
+    let tree = &bvh_tree.nodes;
+    let bvh_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("BVH storage buffer"),
+        contents: bytemuck::cast_slice(tree.as_slice()),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+    });
+
+    let bvh_bind_group_layout = device.create_bind_group_layout(
+        &BindGroupLayoutDescriptor {
+            label: Some("scene bind group layout"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }
+            ],
+        }
+    );
+    let bvh_bind_group = device.create_bind_group(
+        &wgpu::BindGroupDescriptor {
+            label: Some("bvh bind group"),
+            layout: &bvh_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: bvh_buffer.as_entire_binding(),
+                }
+            ],
+        }
+    );
+    (bvh_bind_group, bvh_bind_group_layout)
+}
+
 fn create_scene_bind_group(device: &Device, scene: &Scene)
     -> (wgpu::BindGroup, wgpu::BindGroupLayout) {
     let spheres = &scene.spheres;
@@ -314,16 +361,17 @@ fn create_scene_bind_group(device: &Device, scene: &Scene)
             ],
         }
     );
+
     let scene_bind_group = device.create_bind_group(
         &wgpu::BindGroupDescriptor {
             label: Some("scene bind group"),
             layout: &scene_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 0,
                     resource: sphere_buffer.as_entire_binding(),
                 },
-                wgpu::BindGroupEntry {
+                BindGroupEntry {
                     binding: 1,
                     resource: materials_buffer.as_entire_binding(),
                 }
@@ -335,9 +383,8 @@ fn create_scene_bind_group(device: &Device, scene: &Scene)
 
 fn create_parameters_bind_group(device: &Device,
                                 queue: &Queue,
-                                render_parameters: &RenderParameters,
-                                bvh_tree: &BVHTree)
-    -> (wgpu::BindGroup, wgpu::BindGroupLayout, Buffer, Buffer, Buffer) {
+                                render_parameters: &RenderParameters)
+    -> (wgpu::BindGroup, wgpu::BindGroupLayout, Buffer, Buffer) {
     // initialize the camera buffer
     let camera_desc = wgpu::BufferDescriptor {
         label: Some("camera uniform buffer"),
@@ -364,22 +411,6 @@ fn create_parameters_bind_group(device: &Device,
                        0,
                        bytemuck::cast_slice(&[sampling_parameters]));
 
-    // initialize the bvh_tree buffer
-    let tree = &bvh_tree.tree;
-    let bvh_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("BVH storage buffer"),
-        contents: bytemuck::cast_slice(tree.as_slice()),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-    });
-    // let bvh_desc = wgpu::BufferDescriptor {
-    //     label: Some("BVH Tree uniform buffer"),
-    //     size: 32,
-    //     usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-    //     mapped_at_creation: false,
-    // };
-    // let bvh_buffer = device.create_buffer(&bvh_desc);
-    queue.write_buffer(&bvh_buffer, 0, bytemuck::cast_slice(tree.as_slice()));
-
     let parameters_bind_group_layout = device.create_bind_group_layout(
         &BindGroupLayoutDescriptor {
             label: Some("parameters bind group layout"),
@@ -403,29 +434,8 @@ fn create_parameters_bind_group(device: &Device,
                         min_binding_size: None,
                     },
                     count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
                 }
-                // BindGroupLayoutEntry {
-                //     binding: 2,
-                //     visibility: ShaderStages::COMPUTE,
-                //     ty: BindingType::Buffer {
-                //         ty: BufferBindingType::Uniform,
-                //         has_dynamic_offset: false,
-                //         min_binding_size: None,
-                //     },
-                //     count: None,
-                // }
             ],
-
         }
     );
 
@@ -441,16 +451,12 @@ fn create_parameters_bind_group(device: &Device,
                 BindGroupEntry {
                     binding: 1,
                     resource: sampling_parameters_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: bvh_buffer.as_entire_binding(),
                 }
             ],
         }
     );
 
-    (parameters_bind_group, parameters_bind_group_layout, camera_buffer, sampling_parameters_buffer, bvh_buffer)
+    (parameters_bind_group, parameters_bind_group_layout, camera_buffer, sampling_parameters_buffer)
 }
 
 fn create_display_pipeline(

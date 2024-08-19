@@ -40,8 +40,8 @@ impl Bin {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct BVHNode {
     pub aabb_min: Vec3,
-    pub aabb_max: Vec3,
     pub left_first: u32,
+    pub aabb_max: Vec3,
     pub prim_count: u32
 }
 
@@ -140,13 +140,14 @@ impl BVHNode {
     }
 }
 
+
 pub struct BVHTree {
-    pub tree: Vec<BVHNode>,
+    pub nodes: Vec<BVHNode>,
 }
 
 impl BVHTree {
     pub fn new(num_primitives: usize) -> Self {
-        Self { tree: Vec::<BVHNode>::with_capacity(2 * num_primitives) }
+        Self { nodes: Vec::<BVHNode>::with_capacity(2 * num_primitives) }
     }
 
     pub fn build_bvh_tree(&mut self, spheres: &mut [Sphere]) {
@@ -155,10 +156,10 @@ impl BVHTree {
         node.left_first = 0;
         node.prim_count = prim_count;
         node.update_node_bounds(spheres);
-        self.tree.push(node);
+        self.nodes.push(node);
 
         // push an empty node at index 1 as a placeholder that will never be used
-        self.tree.push(BVHNode::default());
+        self.nodes.push(BVHNode::default());
 
         self.subdivide(0, spheres);
         println!("finished bvh_tree");
@@ -166,15 +167,15 @@ impl BVHTree {
 
     fn subdivide(&mut self, index: usize, spheres: &mut [Sphere]) {
         let (split_cost, best_axis, plane_val) =
-            self.tree[index].find_best_split_plane(spheres);
-        let cost = self.tree[index].find_node_cost();
+            self.nodes[index].find_best_split_plane(spheres);
+        let cost = self.nodes[index].find_node_cost();
 
         if cost <= split_cost {
             return;
         }
 
-        let mut i = self.tree[index].left_first as usize;
-        let mut j = i + self.tree[index].prim_count as usize - 1;
+        let mut i = self.nodes[index].left_first as usize;
+        let mut j = i + self.nodes[index].prim_count as usize - 1;
 
         while i <= j {
             if spheres[i].center[best_axis] < plane_val {
@@ -184,27 +185,27 @@ impl BVHTree {
                 j -= 1;
             }
         }
-        let left_count = i as u32 - self.tree[index].left_first;
-        if left_count == 0 || left_count == self.tree[index].prim_count {
+        let left_count = i as u32 - self.nodes[index].left_first;
+        if left_count == 0 || left_count == self.nodes[index].prim_count {
             return;
         }
 
-        let node_idx = self.tree.len();
+        let node_idx = self.nodes.len();
         let mut left_node = BVHNode::default();
-        left_node.left_first = self.tree[index].left_first;
+        left_node.left_first = self.nodes[index].left_first;
         left_node.prim_count = left_count;
         left_node.update_node_bounds(spheres);
 
         let mut right_node = BVHNode::default();
         right_node.left_first = i as u32;
-        right_node.prim_count = self.tree[index].prim_count - left_count;
+        right_node.prim_count = self.nodes[index].prim_count - left_count;
         right_node.update_node_bounds(spheres);
 
-        self.tree[index].left_first = node_idx as u32;
-        self.tree[index].prim_count = 0;
+        self.nodes[index].left_first = node_idx as u32;
+        self.nodes[index].prim_count = 0;
 
-        self.tree.push(left_node);
-        self.tree.push(right_node);
+        self.nodes.push(left_node);
+        self.nodes.push(right_node);
 
         self.subdivide(node_idx, spheres);
         self.subdivide(node_idx + 1, spheres);

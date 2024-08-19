@@ -3,12 +3,12 @@ const EPSILON = 0.001f;
 const PI = 3.1415927f;
 const FRAC_1_PI = 0.31830987f;
 const FRAC_PI_2 = 1.5707964f;
-const USE_BVH = false;
+const USE_BVH = true;
 
 struct BVHNode {
     aabbMin: vec3f,
-    aabbMax: vec3f,
     leftFirst: u32,
+    aabbMax: vec3f,
     primCount: u32,
 }
 
@@ -53,14 +53,14 @@ struct SamplingParameters {
     num_bounces: u32
 }
 
-const STACKSIZEGUESS:u32 = 1000;
+const STACKSIZE:u32 = 16;
 
 @group(0) @binding(0) var color_buffer: texture_storage_2d<rgba8unorm, write>;
 @group(1) @binding(0) var<storage, read> spheres: array<Sphere>;
 @group(1) @binding(1) var<storage, read> materials: array<Material>;
-@group(2) @binding(0) var<uniform> camera: CameraData;
-@group(2) @binding(1) var<uniform> sampling_parameters: SamplingParameters;
-@group(2) @binding(2) var<storage, read> bvhTree: array<BVHNode>;
+@group(2) @binding(0) var<storage, read> bvhTree: array<BVHNode>;
+@group(3) @binding(0) var<uniform> camera: CameraData;
+@group(3) @binding(1) var<uniform> sampling_parameters: SamplingParameters;
 override stackSize:u32;
 @compute @workgroup_size(1,1,1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -88,6 +88,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         pixel_color += rayColor(ray, &rng_state);
     }
     pixel_color = pixel_color / f32(sampling_parameters.samples_per_pixel);
+
 //    pixel_color = vec3f(0.0, 0.0, 1.0);
 //    pixel_color = vec3f(rngNextFloat(&rng_state), rngNextFloat(&rng_state), rngNextFloat(&rng_state));
 //    let pixel_color: vec3<f32> = vec3<f32>(f32(screen_pos.x) / f32(screen_size.x), f32(screen_pos.y) / f32(screen_size.y), 0.0);
@@ -125,16 +126,15 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
     // runs through objects in the scene and returns true if the ray hits one, and updates
     // the hitPayload with the closest hit
 
-    var nearest_hit: f32 = 99999;
+    var nearest_hit: f32 = 1e30;
     let sphere_count = arrayLength(&spheres);
     var tempHitPayload = HitPayload();
 
     if USE_BVH {
         // this is where I will implement the BVH tree search rather than using a full primitive search
-//        override stackSize:u32 = arrayLength(&bvhTree);
-        var stack = array<BVHNode, STACKSIZEGUESS>();
+        var stack = array<BVHNode, STACKSIZE>();
         var stackPointer:u32 = 0;
-        var node = bvhTree[0];
+        var node: BVHNode = bvhTree[0];
         while true {
             if node.primCount > 0 {
                 // this is a leaf and has primitives, so check to see if primitives are hit
@@ -145,46 +145,48 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
                         tempHitPayload = newHitPayload;
                     }
                 }
+                // we are now done with this node; if stack is empty, break; otherwise
+                // set node based on the stack
                 if stackPointer == 0 {
                     break;
-                } else {
+                }
+                else {
                     stackPointer--;
                     node = stack[stackPointer];
                     continue;
                 }
-            }
-            // if not a leaf, check to see if this node has been hit
-            var t:f32 = 0.0;
-            if hit_bvh_node(node, ray, nearest_hit, &t) {
-                // if hit, we want to evaluate the left and right nodes
-                let leftChild = bvhTree[node.leftFirst];
-                let rightChild = bvhTree[node.leftFirst + 1];
-                var t_left:f32 = 0.0;
-                var t_right:f32 = 0.0;
-                let l_hit = hit_bvh_node(leftChild, ray, nearest_hit, &t_left);
-                let r_hit = hit_bvh_node(rightChild, ray, nearest_hit, &t_right);
+            } else {
+                // if not a leaf, check to see if this node's children have been hit
+                var leftChild = bvhTree[node.leftFirst];
+                var rightChild = bvhTree[node.leftFirst + 1];
+                var t_left:f32 = hit_bvh_node(leftChild, ray);
+                var t_right:f32 = hit_bvh_node(rightChild, ray);
 
-                // make the new node one of them and push the other onto the stack if both hit
-                if l_hit && r_hit {
-                    if t_left < t_right {
-                        node = leftChild;
+                // make sure the left node is always the closer node
+                var swap = false;
+                if t_left > t_right {
+                    let temp_t:f32 = t_left;
+                    t_left = t_right;
+                    t_right = temp_t;
+
+                    var temp = leftChild;
+                    leftChild = rightChild;
+                    rightChild = temp;
+                }
+                // if the left hit is bigger than nearest hit, no need to do anything else here
+                if t_left > nearest_hit {
+                    if stackPointer == 0 {
+                        break;
+                    } else {
+                        stackPointer--;
+                        node = stack[stackPointer];
+                    }
+                } else {
+                    node = leftChild;
+                    // if the rightChild hit distance is also smaller than nearest_hit, save to the stack
+                    if t_right < nearest_hit {
                         stack[stackPointer] = rightChild;
                         stackPointer++;
-                    } else {
-                        node = rightChild;
-                        stack[stackPointer] = leftChild;
-                        stackPointer++;
-                    }
-                } else if l_hit {
-                    node = leftChild;
-                } else if r_hit {
-                    node = rightChild;
-                } else {
-                    if stackPointer == 0 {
-                    break;
-                    } else {
-                        node = stack[stackPointer];
-                        stackPointer--;
                     }
                 }
             }
@@ -205,14 +207,14 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
 
     // then after looping through the objects, we will know the nearest_hit_t and the index; we could call
     // for the payload then (as opposed to filling it out every time we hit a closer sphere)
-    if nearest_hit < 9999 {
+    if nearest_hit < 1e30 {
         *hit = tempHitPayload;
         return true;
     }
     return false;
 }
 
-fn hit_bvh_node(node: BVHNode, ray: Ray, nearest: f32, t: ptr<function, f32>) -> bool {
+fn hit_bvh_node(node: BVHNode, ray: Ray) -> f32 {
     let t_x_min = (node.aabbMin.x - ray.origin.x) / ray.direction.x;
     let t_x_max = (node.aabbMax.x - ray.origin.x) / ray.direction.x;
     var tmin = min(t_x_min, t_x_max);
@@ -220,16 +222,16 @@ fn hit_bvh_node(node: BVHNode, ray: Ray, nearest: f32, t: ptr<function, f32>) ->
     let t_y_min = (node.aabbMin.y - ray.origin.y) / ray.direction.y;
     let t_y_max = (node.aabbMax.y - ray.origin.y) / ray.direction.y;
     tmin = max(min(t_y_min, t_y_max), tmin);
-    tmax = min(max(t_y_max, t_y_min), tmax);
+    tmax = min(max(t_y_min, t_y_max), tmax);
     let t_z_min = (node.aabbMin.z - ray.origin.z) / ray.direction.z;
     let t_z_max = (node.aabbMax.z - ray.origin.z) / ray.direction.z;
     tmin = max(min(t_z_min, t_z_max), tmin);
-    tmax = min(max(t_z_max, t_z_min), tmax);
-    if tmin > tmax || tmin > nearest || tmax <= 0.0 {
-        return false;
+    tmax = min(max(t_z_min, t_z_max), tmax);
+
+    if tmin > tmax || tmax <= 0.0 {
+        return 1e30;
     } else {
-        *t = tmin;
-        return true;
+        return tmin;
     }
 }
 

@@ -40,7 +40,7 @@ impl Scene {
             0.5,
             3);
 
-        let mut spheres = vec![ground, center, left, right, bubble];
+        let mut spheres = vec![ground, center, right, left, bubble];
 
         Self { spheres, materials }
     }
