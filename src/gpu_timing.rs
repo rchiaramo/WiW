@@ -49,22 +49,22 @@ impl QueryResults {
     #[cfg_attr(test, allow(unused))]
     pub fn print(&self, queue: &wgpu::Queue) {
         let period = queue.get_timestamp_period();
-        let elapsed_us = |start, end: u64| end.wrapping_sub(start) as f64 * period as f64 / (1000000.0);
+        let elapsed_ms = |start, end: u64| { end.wrapping_sub(start) as f64 * period as f64 / (1000000.0) };
 
         println!(
             "Elapsed time before compute until after render: {:.2} ms",
-            elapsed_us(self.encoder_timestamps[0], self.encoder_timestamps[1]) as f32,
+            elapsed_ms(self.encoder_timestamps[0], self.encoder_timestamps[1]) as f32,
         );
         println!(
             "Elapsed time compute pass: {:.2} ms",
-            elapsed_us(
+            elapsed_ms(
                 self.compute_start_end_timestamps[0],
                 self.compute_start_end_timestamps[1]
             ) as f32
         );
         println!(
             "Elapsed time render pass: {:.2} ms",
-            elapsed_us(
+            elapsed_ms(
                 self.render_start_end_timestamps[0],
                 self.render_start_end_timestamps[1]
             ) as f32

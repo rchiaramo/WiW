@@ -14,7 +14,7 @@ pub struct GPUCamera {
     du: Vec4,
     dv: Vec4,
     defocus_radius: f32,
-    _buffer: Vec3
+    _buffer: [u32; 3]
 }
 unsafe impl bytemuck::Pod for GPUCamera {}
 unsafe impl bytemuck::Zeroable for GPUCamera {}
@@ -46,7 +46,7 @@ impl GPUCamera {
             du: du.extend(0.0),
             dv: dv.extend(0.0),
             defocus_radius,
-            _buffer: Vec3::ZERO
+            _buffer: [0u32; 3]
         }
     }
 }
@@ -56,6 +56,7 @@ impl GPUCamera {
 pub struct GPUSamplingParameters {
     samples_per_pixel: u32,
     num_bounces: u32,
+    _buffer: [u32; 6],
 }
 
 // right now this is silly, but later when we add fields to this struct,
@@ -66,5 +67,6 @@ pub fn get_gpu_sampling_params(sampling_parameters: &SamplingParameters)
     GPUSamplingParameters {
         samples_per_pixel: sampling_parameters.samples_per_pixel,
         num_bounces: sampling_parameters.num_bounces,
+        _buffer: [0u32; 6]
     }
 }

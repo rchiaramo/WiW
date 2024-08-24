@@ -71,18 +71,19 @@ impl RayTracer {
             wgpu::include_wgsl!("../shaders/raytracer_kernel.wgsl")
         );
         let mut id:HashMap<String, f64> = HashMap::new();
-        id.insert("stackSize".to_string(), (bvh_tree.nodes.len() - 1) as f64);
+        // id.insert("stackSize".to_string(), (bvh_tree.nodes.len() - 1) as f64);
         let ray_tracer_pipeline = device.create_compute_pipeline(
             &wgpu::ComputePipelineDescriptor {
                 label: Some("ray tracer pipeline"),
                 layout: Some(&ray_tracer_pipeline_layout),
                 module: &shader,
                 entry_point: "main",
-                compilation_options: PipelineCompilationOptions {
-                    constants: &id,
-                    zero_initialize_workgroup_memory: false,
-                    vertex_pulling_transform: false,
-                }, // Default::default(),
+                compilation_options: Default::default(),
+                // PipelineCompilationOptions {
+                //     constants: None, //&id,
+                //     zero_initialize_workgroup_memory: false,
+                //     vertex_pulling_transform: false,
+                // }, // Default::default(),
                 cache: None,
             }
         );
@@ -405,7 +406,7 @@ fn create_parameters_bind_group(device: &Device,
     // initialize the sampling_parameters buffer
     let sampling_param_desc = wgpu::BufferDescriptor {
         label: Some("sampling parameters uniform buffer"),
-        size: 8,
+        size: 32,
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         mapped_at_creation: false,
     };

@@ -59,7 +59,7 @@ impl BVHNode {
         let mut aabb_min = Vec3::INFINITY;
         let mut aabb_max = Vec3::NEG_INFINITY;
         //expand the aabb
-        for i in 0 ..self.prim_count as usize {
+        for i in 0 ..self.prim_count as usize { 
             let (sph_min, sph_max) =
                 spheres[self.left_first as usize + i].get_aabb();
             aabb_min = aabb_min.min(sph_min);

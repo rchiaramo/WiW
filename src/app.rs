@@ -88,6 +88,10 @@ impl ApplicationHandler for App<'_> {
         }
     }
 
+    // fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+    //     self.window.as_ref().unwrap().request_redraw();
+    // }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, 
                     window_id: WindowId, event: WindowEvent) {
         let window = self.window.as_ref().unwrap();
