@@ -144,8 +144,8 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
                 // if not a leaf, check to see if this node's children have been hit
                 var leftChild = bvhTree[node.leftFirst];
                 var rightChild = bvhTree[node.leftFirst + 1];
-                var t_left:f32 = hit_bvh_node(leftChild, ray);
-                var t_right:f32 = hit_bvh_node(rightChild, ray);
+                var t_left:f32 = hit_bvh_node(leftChild, ray, nearest_hit);
+                var t_right:f32 = hit_bvh_node(rightChild, ray, nearest_hit);
 
                 // make sure the left node is always the closer node
                 var swap = false;
@@ -199,7 +199,7 @@ fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
     return false;
 }
 
-fn hit_bvh_node(node: BVHNode, ray: Ray) -> f32 {
+fn hit_bvh_node(node: BVHNode, ray: Ray, nearest_hit: f32) -> f32 {
     let t_x_min = (node.aabbMin.x - ray.origin.x) * ray.invDirection.x;
     let t_x_max = (node.aabbMax.x - ray.origin.x) * ray.invDirection.x;
     var tmin = min(t_x_min, t_x_max);
@@ -213,7 +213,7 @@ fn hit_bvh_node(node: BVHNode, ray: Ray) -> f32 {
     tmin = max(min(t_z_min, t_z_max), tmin);
     tmax = min(max(t_z_min, t_z_max), tmax);
 
-    if tmin > tmax || tmax <= 0.0 {
+    if tmin > tmax || tmax <= 0.0 || tmin > nearest_hit {
         return 1e30;
     } else {
         return tmin;
