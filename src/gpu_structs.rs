@@ -56,7 +56,10 @@ impl GPUCamera {
 pub struct GPUSamplingParameters {
     samples_per_pixel: u32,
     num_bounces: u32,
-    _buffer: [u32; 6],
+    samples_per_frame: u32,
+    total_samples_completed: u32,
+    frame: u32,
+    _buffer: [u32; 3],
 }
 
 // right now this is silly, but later when we add fields to this struct,
@@ -67,6 +70,9 @@ pub fn get_gpu_sampling_params(sampling_parameters: &SamplingParameters)
     GPUSamplingParameters {
         samples_per_pixel: sampling_parameters.samples_per_pixel,
         num_bounces: sampling_parameters.num_bounces,
-        _buffer: [0u32; 6]
+        samples_per_frame: sampling_parameters.samples_per_frame,
+        total_samples_completed: sampling_parameters.total_samples_completed,
+        frame: sampling_parameters.frame,
+        _buffer: [0u32; 3]
     }
 }

@@ -51,7 +51,10 @@ struct CameraData {
 
 struct SamplingParameters {
     samples_per_pixel: u32,
-    num_bounces: u32
+    num_bounces: u32,
+    samples_per_frame: u32,
+    total_samples_completed: u32,
+    frame: u32,
 }
 
 const STACKSIZE:u32 = 10;
@@ -71,7 +74,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
     // start here with main loop; for this position, loop over samples_per_pixel
     var pixel_color: vec3f = vec3f(0.0, 0.0, 0.0);
-    var rng_state:u32 = initRng(screen_pos, image_size, 1u);
+    var rng_state:u32 = initRng(screen_pos, image_size, sampling_parameters.frame);
+    
+    if (sampling_parameters.frame == 1) {
+        textureStore(color_buffer, screen_pos, vec4<f32>());
+    }
+    
     for (var i: u32 = 0; i < sampling_parameters.samples_per_pixel; i++) {
         var ray: Ray = getRay(camera.pixel_00.xyz, id.x, id.y, camera.du.xyz, camera.dv.xyz, &rng_state);
         pixel_color += rayColor(ray, &rng_state);
@@ -103,8 +111,11 @@ fn rayColor(primaryRay: Ray, state: ptr<function, u32>) -> vec3<f32> {
             break;
         }
     }
-
-    return pixel_color;
+//    pixel_color.x = pow(pixel_color.x, 1.0/2.4);
+//    pixel_color.y = pow(pixel_color.y, 1.0 / 2.4);
+//    pixel_color.z = pow(pixel_color.z, 1.0 / 2.4);
+//    pixel_color = 1.055 * pixel_color - 0.055;
+    return sqrt(pixel_color);
 }
 
 fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {
@@ -412,7 +423,7 @@ fn rngNextUintInRange(state: ptr<function, u32>, min: u32, max: u32) -> u32 {
 
 fn rngNextFloat(state: ptr<function, u32>) -> f32 {
     rngNextInt(state);
-    return f32(*state) / f32(0xffffffffu);
+    return f32(*state) * 2.3283064365387e-10f;  // / f32(0xffffffffu - 1f);
 }
 
 fn initRng(pixel: vec2<u32>, resolution: vec2<u32>, frame: u32) -> u32 {

@@ -61,19 +61,6 @@ impl ApplicationHandler for App<'_> {
             };
             self.render_parameters.viewport = size;
 
-            // This code properly gets the resolution of the largest window, but when passed to
-            // the renderer to use as the biggest array value, clips the image for some reason
-
-            // let _max_viewport_resolution = window
-            //     .available_monitors()
-            //     .map(|monitor| -> u32 {
-            //         let viewport = monitor.size();
-            //         size = (viewport.width, viewport.height);
-            //         size.0 * size.1
-            //     })
-            //     .max()
-            //     .expect("must have at least one monitor");
-
             if let Some(state) = &self.wgpu_state {
                 self.renderer = RayTracer::new(
                     &state.device,
@@ -127,6 +114,7 @@ impl ApplicationHandler for App<'_> {
                 WindowEvent::CursorMoved { position, ..} => {
                     self.cursor_position = position;
                 }
+                
                 WindowEvent::MouseInput { state, ..
                 } => {
                     if state.is_pressed() {
@@ -195,6 +183,12 @@ impl<'a> WgpuState<'a> {
         // Check timestamp features.
         let features = adapter.features()
             & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS);
+        // if features.contains(wgpu::Features::BGRA8UNORM_STORAGE)
+        // {
+        //     println!("Adapter has bgra8unorm storage");
+        // } else {
+        //     println!("Adapter does not have this storage");
+        // }
         // if features.contains(wgpu::Features::TIMESTAMP_QUERY) {
         //     println!("Adapter supports timestamp queries.");
         // } else {
@@ -252,11 +246,21 @@ impl<'a> WgpuState<'a> {
 pub struct SamplingParameters {
     pub samples_per_pixel: u32,
     pub num_bounces: u32,
+    pub samples_per_frame: u32,
+    pub total_samples_completed: u32,
+    pub frame: u32
 }
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        Self { samples_per_pixel: 100_u32, num_bounces: 50_u32 }
+        
+        Self { 
+            samples_per_pixel: 5_u32, 
+            num_bounces: 50_u32,
+            samples_per_frame: 5_u32,
+            total_samples_completed: 0_u32,
+            frame: 1_u32
+        }
     }
 }
 
