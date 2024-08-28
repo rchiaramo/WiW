@@ -8,6 +8,7 @@ mod material;
 mod gpu_structs;
 mod gpu_timing;
 mod bvh;
+mod Buffers;
 
 pub use app::App;
 pub use sphere::Sphere;

@@ -50,43 +50,51 @@ struct CameraData {
 }
 
 struct SamplingParameters {
-    samples_per_pixel: u32,
-    num_bounces: u32,
     samples_per_frame: u32,
-    total_samples_completed: u32,
+    num_bounces: u32,
+    reset: u32
+}
+
+struct FrameBuffer {
+    width: u32,
+    height: u32,
     frame: u32,
+    num_samples: u32
 }
 
 const STACKSIZE:u32 = 10;
 
-@group(0) @binding(0) var color_buffer: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(0) var<storage, read_write> image_buffer: array<array<f32, 3>>;
+@group(0) @binding(1) var<uniform> frame_buffer: FrameBuffer;
 @group(1) @binding(0) var<storage, read> spheres: array<Sphere>;
 @group(1) @binding(1) var<storage, read> materials: array<Material>;
-@group(2) @binding(0) var<storage, read> bvhTree: array<BVHNode>;
-@group(3) @binding(0) var<uniform> camera: CameraData;
-@group(3) @binding(1) var<uniform> sampling_parameters: SamplingParameters;
-//override stackSize:u32;
+@group(1) @binding(2) var<storage, read> bvhTree: array<BVHNode>;
+@group(2) @binding(0) var<uniform> camera: CameraData;
+@group(2) @binding(1) var<uniform> sampling_parameters: SamplingParameters;
+
 @compute @workgroup_size(1,1,1)
 fn main(@builtin(global_invocation_id) id: vec3u) {
 
-    let image_size: vec2<u32> = textureDimensions(color_buffer);
+    let image_size = vec2(frame_buffer.width, frame_buffer.height);
     let screen_pos = id.xy;
+    let idx = id.x + id.y * image_size.x;
 
-    // start here with main loop; for this position, loop over samples_per_pixel
-    var pixel_color: vec3f = vec3f(0.0, 0.0, 0.0);
-    var rng_state:u32 = initRng(screen_pos, image_size, sampling_parameters.frame);
-    
-    if (sampling_parameters.frame == 1) {
-        textureStore(color_buffer, screen_pos, vec4<f32>());
+    // load the stored pixel color
+    var pixel_color: vec3f = vec3f(image_buffer[idx][0], image_buffer[idx][1], image_buffer[idx][2]);
+    var rng_state:u32 = initRng(screen_pos, image_size, frame_buffer.frame);
+
+    if (sampling_parameters.reset == 1) {
+        pixel_color = vec3f(0.0, 0.0, 0.0);
     }
-    
-    for (var i: u32 = 0; i < sampling_parameters.samples_per_pixel; i++) {
+
+    for (var i: u32 = 0; i < sampling_parameters.samples_per_frame; i++) {
         var ray: Ray = getRay(camera.pixel_00.xyz, id.x, id.y, camera.du.xyz, camera.dv.xyz, &rng_state);
         pixel_color += rayColor(ray, &rng_state);
     }
-    pixel_color = pixel_color / f32(sampling_parameters.samples_per_pixel);
 
-    textureStore(color_buffer, screen_pos, vec4<f32>(pixel_color, 1.0));
+    image_buffer[idx][0] = pixel_color.x;
+    image_buffer[idx][1] = pixel_color.y;
+    image_buffer[idx][2] = pixel_color.z;
 }
 
 fn rayColor(primaryRay: Ray, state: ptr<function, u32>) -> vec3<f32> {
@@ -115,7 +123,7 @@ fn rayColor(primaryRay: Ray, state: ptr<function, u32>) -> vec3<f32> {
 //    pixel_color.y = pow(pixel_color.y, 1.0 / 2.4);
 //    pixel_color.z = pow(pixel_color.z, 1.0 / 2.4);
 //    pixel_color = 1.055 * pixel_color - 0.055;
-    return sqrt(pixel_color);
+    return pixel_color;
 }
 
 fn TraceRay(ray: Ray, hit: ptr<function, HitPayload>) -> bool {

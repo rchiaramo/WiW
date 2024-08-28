@@ -5,42 +5,18 @@ use winit::event_loop::{ActiveEventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use crate::{Camera, RayTracer};
+use crate::gpu_structs::GPUFrameBuffer;
 use crate::gpu_timing::QueryResults;
-use crate::scene::Scene;
-use crate::bvh::BVHTree;
 
-
+#[derive(Default)]
 pub struct App<'a> {
     window: Option<Arc<Window>>,
     wgpu_state: Option<WgpuState<'a>>,
     renderer: Option<RayTracer>,
-    scene: Scene,
     render_parameters: RenderParameters,
+    last_render_params: RenderParameters,
+    render_progress: RenderProgress,
     cursor_position: winit::dpi::PhysicalPosition<f64>,
-    bvh_tree: BVHTree,
-}
-
-impl Default for App<'_> {
-    fn default() -> Self {
-        let mut scene = Scene::book_one_final();
-        // scene = Scene::new();
-        let camera = Camera::default();
-        let mut bvh_tree = BVHTree::new(scene.spheres.len());
-        bvh_tree.build_bvh_tree(&mut scene.spheres);
-        let render_parameters = RenderParameters {
-            camera,
-            sampling_parameters: SamplingParameters::default(),
-            viewport:(0, 0)
-        };
-        Self {window: None,
-            wgpu_state: None,
-            renderer: None,
-            scene,
-            render_parameters,
-            cursor_position: winit::dpi::PhysicalPosition::default(),
-            bvh_tree
-        }
-    }
 }
 
 impl ApplicationHandler for App<'_> {
@@ -55,29 +31,29 @@ impl ApplicationHandler for App<'_> {
 
             self.wgpu_state = WgpuState::new(window.clone());
 
+            let max_viewport_resolution = window
+                .available_monitors()
+                .map(|monitor| -> u32 {
+                    let viewport = monitor.size();
+                    let size = (viewport.width, viewport.height);
+                    size.0 * size.1
+                })
+                .max()
+                .expect("must have at least one monitor");
+
             let size = {
                 let viewport = window.inner_size();
                 (viewport.width, viewport.height)
             };
-            self.render_parameters.viewport = size;
+            
+            self.render_parameters.viewport_size = size;
 
             if let Some(state) = &self.wgpu_state {
-                self.renderer = RayTracer::new(
-                    &state.device,
-                    &state.queue,
-                    &state.surface_config,
-                    &self.render_parameters,
-                    &self.scene,
-                    self.render_parameters.viewport,
-                    &self.bvh_tree,
-                );
+                self.renderer = 
+                    RayTracer::new(&state.device, max_viewport_resolution, size, &mut self.render_parameters);
             }
         }
     }
-
-    // fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-    //     self.window.as_ref().unwrap().request_redraw();
-    // }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, 
                     window_id: WindowId, event: WindowEvent) {
@@ -85,6 +61,22 @@ impl ApplicationHandler for App<'_> {
         if window.id() != window_id { return; }
 
         let renderer = self.renderer.as_mut().unwrap();
+        let state = self.wgpu_state.as_mut().unwrap();
+        
+        let done = self.render_progress.progress(5);
+        let viewport_size = self.render_parameters.get_viewport();
+        let frame = GPUFrameBuffer::new(
+            viewport_size.0,
+            viewport_size.1,
+            self.render_progress.frame(),
+            self.render_progress.accumulated_samples()
+        );
+        
+        // if self.render_parameters != self.last_render_params {
+        //     self.render_parameters.sampling_parameters.reset()
+        // }
+        // 
+        // self.last_render_params = self.render_parameters;
 
         if !renderer.input(&event) {
             match event {
@@ -100,21 +92,21 @@ impl ApplicationHandler for App<'_> {
                 }
 
                 WindowEvent::Resized(new_size) => {
-                    if let (Some(renderer), Some(state)) =
-                        (self.renderer.as_mut(), self.wgpu_state.as_mut()) {
-                        self.render_parameters.viewport = (new_size.width, new_size.height);
-                        renderer.resize(&state.device,
-                                        &state.queue,
-                                        &mut state.surface,
-                                        &mut state.surface_config,
-                                        &self.render_parameters);
-                        window.request_redraw();
-                    }
+                    let (width, height) = (new_size.width, new_size.height);
+                    self.render_parameters.set_viewport((width, height));
+                    state.resize((width, height));
+                    
+                    renderer.resize(&state.device,
+                                    &state.queue,
+                                    &self.render_parameters);
+                    window.request_redraw();
+                    
                 }
+                
                 WindowEvent::CursorMoved { position, ..} => {
                     self.cursor_position = position;
                 }
-                
+
                 WindowEvent::MouseInput { state, ..
                 } => {
                     if state.is_pressed() {
@@ -123,24 +115,24 @@ impl ApplicationHandler for App<'_> {
                 }
 
                 WindowEvent::RedrawRequested => {
-                    if let (Some(renderer), Some(state)) =
-                        (self.renderer.as_mut(), self.wgpu_state.as_mut()) {
-                            renderer.update();
+                    if !done {
+                        renderer.update(&state.queue, frame);
                         let queries =
                             renderer.render(
                                 &mut state.surface,
                                 &state.device,
                                 &state.queue,
-                                self.render_parameters.viewport
+                                self.render_parameters.viewport_size
                             );
                         let raw_results = queries.wait_for_results(&state.device);
-                        println!("Raw timestamp buffer contents: {:?}", raw_results);
-                        QueryResults::from_raw_results(raw_results).print(&state.queue);
+                        // println!("Raw timestamp buffer contents: {:?}", raw_results);
+                        // QueryResults::from_raw_results(raw_results).print(&state.queue);
                     }
                 }
                 _ => {}
             }
         }
+        self.window.as_ref().unwrap().request_redraw();
     }
 }
 
@@ -241,33 +233,120 @@ impl<'a> WgpuState<'a> {
             queue,
         })
     }
+    
+    fn resize(&mut self, new_size: (u32, u32))
+    {
+        self.surface_config.width = new_size.0;
+        self.surface_config.height = new_size.1;
+        self.surface.configure(&self.device, &self.surface_config);
+    }
 }
 
 pub struct SamplingParameters {
-    pub samples_per_pixel: u32,
-    pub num_bounces: u32,
     pub samples_per_frame: u32,
-    pub total_samples_completed: u32,
-    pub frame: u32
+    pub num_bounces: u32,
+    pub clear_image_buffer: u32,
 }
 
 impl Default for SamplingParameters {
     fn default() -> Self {
-        
-        Self { 
-            samples_per_pixel: 5_u32, 
-            num_bounces: 50_u32,
+
+        Self {
             samples_per_frame: 5_u32,
-            total_samples_completed: 0_u32,
-            frame: 1_u32
+            num_bounces: 50_u32,
+            clear_image_buffer: 0_u32,
         }
     }
 }
 
+impl SamplingParameters {
+    fn reset(&mut self) {
+        self.clear_image_buffer = 1;
+    }
+    
+    fn accumulate(&mut self) {
+        self.clear_image_buffer = 0;
+    }
+}
+
+#[derive(Default)]
 pub struct RenderParameters {
-    pub camera: Camera,
-    pub sampling_parameters: SamplingParameters,
-    pub viewport: (u32, u32)
+    camera: Camera,
+    sampling_parameters: SamplingParameters,
+    viewport_size: (u32, u32),
+    frame: u32,
+    accumulated_samples: u32,
+}
+
+impl RenderParameters {
+    // pub fn new_from(other: &Self) -> Self {
+    //     Self {
+    //         camera: other.camera,
+    //         sampling_parameters: other.sampling_parameters,
+    //         viewport_size: other.viewport_size
+    //     }
+    // }
+    
+    pub fn set_viewport(&mut self, size: (u32, u32)) {
+        self.viewport_size = size;
+    }
+    
+    pub fn get_viewport(&self) -> (u32, u32) {
+        self.viewport_size
+    }
+    
+    pub fn camera(&self) -> &Camera {
+        &self.camera
+    }
+    
+    pub fn update_camera(&mut self, camera: Camera) {
+        self.camera = camera;
+    }
+}
+
+pub struct RenderProgress {
+    frame: u32,
+    samples_per_pixel: u32,
+    accumulated_samples: u32,
+}
+
+impl Default for RenderProgress {
+    fn default() -> Self {
+        Self {
+            frame: 0,
+            samples_per_pixel: 100,
+            accumulated_samples: 0
+        }
+    }
+}
+
+impl RenderProgress {
+    pub fn new(spp: u32) -> Self {
+        Self {
+            frame: 0,
+            samples_per_pixel: spp,
+            accumulated_samples: 0
+        }
+    }
+    
+    pub fn reset(&mut self) {
+        self.frame = 0;
+        self.accumulated_samples = 0;
+    }
+    
+    pub fn frame(&self) -> u32 {
+        self.frame
+    }
+
+    pub fn accumulated_samples(&self) -> u32 {
+        self.accumulated_samples
+    }
+    
+    pub fn progress(&mut self, spf: u32) -> bool {
+        self.frame += 1;
+        self.accumulated_samples += spf;
+        self.accumulated_samples >= self.samples_per_pixel
+    }
 }
 
 
